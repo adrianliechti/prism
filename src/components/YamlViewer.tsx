@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
 
 interface YamlViewerProps {
-  content: string;
+  content: Blob;
 }
 
 function usePrefersDarkMode() {
@@ -27,13 +27,15 @@ export function YamlViewer({ content }: YamlViewerProps) {
   useEffect(() => {
     const highlight = async () => {
       try {
-        const html = await codeToHtml(content, {
+        const text = await content.text();
+        const html = await codeToHtml(text, {
           lang: 'yaml',
           theme: prefersDark ? 'github-dark' : 'github-light',
         });
         setHighlightedCode(html);
       } catch {
-        setHighlightedCode(`<pre>${content}</pre>`);
+        const text = await content.text();
+        setHighlightedCode(`<pre>${text}</pre>`);
       }
     };
     highlight();

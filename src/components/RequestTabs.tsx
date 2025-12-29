@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useClient } from '../context/useClient';
 import { KeyValueEditor } from './KeyValueEditor';
+import { FormDataEditor } from './FormDataEditor';
+import { BinaryUploader } from './BinaryUploader';
 import { CodeEditor } from './CodeEditor';
-import type { RequestBody } from '../types/types';
+import type { RequestBody, FormDataField } from '../types/types';
 
 type Tab = 'headers' | 'params' | 'body';
 
@@ -13,8 +15,17 @@ const bodyTypes: { value: BodyType; label: string }[] = [
   { value: 'json', label: 'JSON' },
   { value: 'form-urlencoded', label: 'Form URL Encoded' },
   { value: 'form-data', label: 'Form Data' },
+  { value: 'binary', label: 'Binary' },
   { value: 'raw', label: 'Raw' },
 ];
+
+function generateId(): string {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+function createEmptyFormDataField(): FormDataField {
+  return { id: generateId(), enabled: true, key: '', type: 'text', value: '', file: null, fileName: '' };
+}
 
 const commonHttpHeaders = [
   'Accept',
@@ -87,10 +98,13 @@ export function RequestTabs() {
         setBody({ type: 'raw', content: body.type === 'raw' ? body.content : '' });
         break;
       case 'form-urlencoded':
-        setBody({ type: 'form-urlencoded', data: body.type === 'form-urlencoded' ? body.data : [{ id: Math.random().toString(36).substring(2, 9), enabled: true, key: '', value: '' }] });
+        setBody({ type: 'form-urlencoded', data: body.type === 'form-urlencoded' ? body.data : [{ id: generateId(), enabled: true, key: '', value: '' }] });
         break;
       case 'form-data':
-        setBody({ type: 'form-data', data: body.type === 'form-data' ? body.data : [{ id: Math.random().toString(36).substring(2, 9), enabled: true, key: '', value: '' }] });
+        setBody({ type: 'form-data', data: body.type === 'form-data' ? body.data : [createEmptyFormDataField()] });
+        break;
+      case 'binary':
+        setBody({ type: 'binary', file: body.type === 'binary' ? body.file : null, fileName: body.type === 'binary' ? body.fileName : '' });
         break;
     }
   };
@@ -173,12 +187,29 @@ export function RequestTabs() {
               />
             )}
 
-            {(body.type === 'form-urlencoded' || body.type === 'form-data') && (
+            {body.type === 'form-urlencoded' && (
               <KeyValueEditor
                 items={body.data}
                 onChange={(data) => setBody({ ...body, data })}
                 keyPlaceholder="Field"
                 valuePlaceholder="Value"
+              />
+            )}
+
+            {body.type === 'form-data' && (
+              <FormDataEditor
+                items={body.data}
+                onChange={(data) => setBody({ ...body, data })}
+                keyPlaceholder="Field"
+                valuePlaceholder="Value"
+              />
+            )}
+
+            {body.type === 'binary' && (
+              <BinaryUploader
+                file={body.file}
+                fileName={body.fileName}
+                onFileChange={(file, fileName) => setBody({ ...body, file, fileName })}
               />
             )}
           </>

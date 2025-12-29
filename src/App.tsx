@@ -24,7 +24,7 @@ function StatusBar() {
       </div>
       <div className="flex items-center gap-2">
         <span className="text-neutral-400 dark:text-neutral-500">Size:</span>
-        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(new Blob([response.body]).size)}</span>
+        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(response.body.size)}</span>
       </div>
     </div>
   );

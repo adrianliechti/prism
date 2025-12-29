@@ -6,47 +6,13 @@ import { XmlViewer } from './XmlViewer';
 import { YamlViewer } from './YamlViewer';
 import { TextViewer } from './TextViewer';
 import { BinaryViewer } from './BinaryViewer';
+import { ImageViewer } from './ImageViewer';
 
 type ViewMode = 'pretty' | 'raw';
-type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary';
-
-function isJson(str: string): boolean {
-  try {
-    JSON.parse(str);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Check if the content appears to be binary by looking for non-printable characters
-function looksLikeBinary(str: string): boolean {
-  if (!str || str.length === 0) return false;
-  
-  // Sample the first 8KB for performance
-  const sample = str.slice(0, 8192);
-  let nonPrintable = 0;
-  
-  for (let i = 0; i < sample.length; i++) {
-    const code = sample.charCodeAt(i);
-    // Allow common whitespace (tab, newline, carriage return) and printable ASCII
-    // Also allow extended UTF-8 characters (> 127)
-    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
-      nonPrintable++;
-    }
-    // Check for null bytes - strong indicator of binary
-    if (code === 0) {
-      return true;
-    }
-  }
-  
-  // If more than 10% non-printable characters, likely binary
-  return nonPrintable / sample.length > 0.1;
-}
+type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary' | 'image';
 
 // Known binary MIME types
 const BINARY_MIME_PATTERNS = [
-  'image/',
   'video/',
   'audio/',
   'application/pdf',
@@ -63,6 +29,20 @@ const BINARY_MIME_PATTERNS = [
   'application/x-mach-binary',
   'application/wasm',
   'font/',
+];
+
+// Known image MIME types
+const IMAGE_MIME_PATTERNS = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+  'image/bmp',
+  'image/x-icon',
+  'image/ico',
+  'image/avif',
+  'image/apng',
 ];
 
 // Known text MIME types (even without 'text/' prefix)
@@ -87,24 +67,21 @@ const TEXT_MIME_PATTERNS = [
   '+xml',
 ];
 
-function detectContentType(body: string, headers: Record<string, string>): ContentType {
+function detectContentType(headers: Record<string, string>): ContentType {
   const contentType = headers['content-type']?.toLowerCase() || '';
   
-  // Check for known binary content types first
+  // Check for image types first
+  if (IMAGE_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
+    return 'image';
+  }
+  
+  // Check for known binary content types
   if (BINARY_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
     return 'binary';
   }
   
-  // Check for known text content types
-  const isKnownText = TEXT_MIME_PATTERNS.some(pattern => contentType.includes(pattern));
-  
-  // If not a known text type, check content for binary data
-  if (!isKnownText && looksLikeBinary(body)) {
-    return 'binary';
-  }
-  
   // Now detect specific text formats
-  if (contentType.includes('json') || contentType.endsWith('+json') || isJson(body)) {
+  if (contentType.includes('json') || contentType.endsWith('+json')) {
     return 'json';
   }
   
@@ -112,16 +89,16 @@ function detectContentType(body: string, headers: Record<string, string>): Conte
     return 'xml';
   }
   
-  // Check content for XML if header doesn't indicate it
-  const trimmedBody = body.trim();
-  if (trimmedBody.startsWith('<?xml') || (trimmedBody.startsWith('<') && trimmedBody.includes('</') && !trimmedBody.startsWith('<!'))) {
-    return 'xml';
-  }
-  
   if (contentType.includes('yaml') || contentType.includes('yml')) {
     return 'yaml';
   }
   
+  // Check for known text content types
+  if (TEXT_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
+    return 'text';
+  }
+  
+  // Default to text for unknown types
   return 'text';
 }
 
@@ -167,10 +144,10 @@ export function ResponseViewer() {
     );
   }
 
-  const contentType = detectContentType(response.body, response.headers);
+  const contentType = detectContentType(response.headers);
 
   const renderContent = () => {
-    if (viewMode === 'raw') {
+    if (viewMode === 'raw' && contentType !== 'image' && contentType !== 'binary') {
       return <TextViewer content={response.body} />;
     }
 
@@ -181,6 +158,8 @@ export function ResponseViewer() {
         return <XmlViewer content={response.body} />;
       case 'yaml':
         return <YamlViewer content={response.body} />;
+      case 'image':
+        return <ImageViewer content={response.body} />;
       case 'binary':
         return <BinaryViewer content={response.body} />;
       case 'text':
@@ -193,7 +172,7 @@ export function ResponseViewer() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* View Controls */}
       <div className="flex gap-2 shrink-0 mb-4">
-        {contentType !== 'binary' && (
+        {contentType !== 'binary' && contentType !== 'image' && (
           <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
             <button
               onClick={() => setViewMode('pretty')}

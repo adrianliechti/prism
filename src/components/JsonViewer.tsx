@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
 
 interface JsonViewerProps {
-  content: string;
+  content: Blob;
 }
 
 function usePrefersDarkMode() {
@@ -36,14 +36,16 @@ export function JsonViewer({ content }: JsonViewerProps) {
   useEffect(() => {
     const highlight = async () => {
       try {
-        const code = formatJson(content);
+        const text = await content.text();
+        const code = formatJson(text);
         const html = await codeToHtml(code, {
           lang: 'json',
           theme: prefersDark ? 'github-dark' : 'github-light',
         });
         setHighlightedCode(html);
       } catch {
-        setHighlightedCode(`<pre>${formatJson(content)}</pre>`);
+        const text = await content.text();
+        setHighlightedCode(`<pre>${formatJson(text)}</pre>`);
       }
     };
     highlight();

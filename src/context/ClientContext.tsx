@@ -75,7 +75,26 @@ function loadHistoryFromStorage(): Request[] {
 
 function saveHistoryToStorage(history: Request[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    // Strip out File objects which can't be serialized
+    const serializableHistory = history.map(req => {
+      if (req.body.type === 'form-data') {
+        return {
+          ...req,
+          body: {
+            ...req.body,
+            data: req.body.data.map(f => ({ ...f, file: null })),
+          },
+        };
+      }
+      if (req.body.type === 'binary') {
+        return {
+          ...req,
+          body: { ...req.body, file: null },
+        };
+      }
+      return req;
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableHistory));
   } catch {
     // Ignore storage errors
   }
@@ -166,10 +185,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       });
 
       // Build body based on type
-      let body: string | undefined;
+      let body: string | FormData | Blob | undefined;
+      let bodyForHistory: string = '';
+      let useFormData = false;
+      
       switch (req.body.type) {
         case 'json':
           body = req.body.content;
+          bodyForHistory = req.body.content;
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'application/json';
           }
@@ -180,24 +203,43 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             formParams.append(f.key, f.value);
           });
           body = formParams.toString();
+          bodyForHistory = formParams.toString();
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'application/x-www-form-urlencoded';
           }
           break;
         }
         case 'form-data': {
-          const formObj: Record<string, string> = {};
+          const formData = new FormData();
+          const formDescription: string[] = [];
           req.body.data.filter(f => f.enabled && f.key).forEach(f => {
-            formObj[f.key] = f.value;
+            if (f.type === 'file' && f.file) {
+              formData.append(f.key, f.file, f.fileName);
+              formDescription.push(`${f.key}: [File: ${f.fileName}]`);
+            } else if (f.type === 'text') {
+              formData.append(f.key, f.value);
+              formDescription.push(`${f.key}: ${f.value}`);
+            }
           });
-          body = JSON.stringify(formObj);
-          if (!headersObj['Content-Type']) {
-            headersObj['Content-Type'] = 'multipart/form-data';
+          body = formData;
+          bodyForHistory = formDescription.join('\n');
+          useFormData = true;
+          // Don't set Content-Type for FormData - browser will set it with boundary
+          break;
+        }
+        case 'binary': {
+          if (req.body.file) {
+            body = req.body.file;
+            bodyForHistory = `[Binary file: ${req.body.fileName}]`;
+            if (!headersObj['Content-Type']) {
+              headersObj['Content-Type'] = req.body.file.type || 'application/octet-stream';
+            }
           }
           break;
         }
         case 'raw':
           body = req.body.content;
+          bodyForHistory = req.body.content;
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'text/plain';
           }
@@ -223,26 +265,33 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         proxyUrl += '?' + queryString;
       }
 
-      // Store the request for history
+      // Store the request for history (without file objects)
       const clientRequest = {
         method: req.method,
         url: req.url,
         headers: headersObj,
         query: Object.fromEntries(queryParams),
-        body: body ?? '',
+        body: bodyForHistory,
         options,
       };
+
+      // Prepare fetch options
+      const fetchHeaders: Record<string, string> = { ...headersObj };
+      // For FormData, remove Content-Type so browser sets it with boundary
+      if (useFormData) {
+        delete fetchHeaders['Content-Type'];
+      }
 
       const startTime = performance.now();
       const response = await fetch(proxyUrl, {
         method: req.method,
-        headers: headersObj,
+        headers: fetchHeaders,
         body: body && req.method !== 'GET' && req.method !== 'HEAD' ? body : undefined,
       });
       const duration = Math.round(performance.now() - startTime);
 
-      // Read response body
-      const responseBody = await response.text();
+      // Always read response as Blob
+      const responseBody = await response.blob();
 
       // Convert headers to Record
       const responseHeaders: Record<string, string> = {};
@@ -304,7 +353,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         status: '',
         statusCode: 0,
         headers: {},
-        body: '',
+        body: new Blob(),
         duration: 0,
         error: errorMessage,
       };
@@ -352,11 +401,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     newReq.headers = entry.headers.map(h => ({ ...h, id: generateId() }));
     newReq.query = entry.query.map(p => ({ ...p, id: generateId() }));
     // Clone body with new IDs for form data
-    if (entry.body.type === 'form-urlencoded' || entry.body.type === 'form-data') {
+    if (entry.body.type === 'form-urlencoded') {
       newReq.body = {
-        type: entry.body.type,
+        type: 'form-urlencoded',
         data: entry.body.data.map(f => ({ ...f, id: generateId() })),
       };
+    } else if (entry.body.type === 'form-data') {
+      newReq.body = {
+        type: 'form-data',
+        // Note: File objects can't be serialized to localStorage, so files will be lost
+        data: entry.body.data.map(f => ({ ...f, id: generateId(), file: null })),
+      };
+    } else if (entry.body.type === 'binary') {
+      // Binary files can't be restored from history (can't serialize File objects)
+      newReq.body = { type: 'binary', file: null, fileName: entry.body.fileName };
     } else {
       newReq.body = entry.body;
     }

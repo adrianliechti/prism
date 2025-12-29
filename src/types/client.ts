@@ -16,7 +16,7 @@ export interface ClientResponse {
   status: string;
   statusCode: number;
   headers: Record<string, string>;
-  body: string;
+  body: Blob;
   duration: number;
   error?: string;
 }

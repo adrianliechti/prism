@@ -6,14 +6,25 @@ export type RequestBody =
   | { type: 'none' }
   | { type: 'json'; content: string }
   | { type: 'form-urlencoded'; data: KeyValuePair[] }
-  | { type: 'form-data'; data: KeyValuePair[] }
-  | { type: 'raw'; content: string };
+  | { type: 'form-data'; data: FormDataField[] }
+  | { type: 'raw'; content: string }
+  | { type: 'binary'; file: File | null; fileName: string };
 
 export interface KeyValuePair {
   id: string;
   enabled: boolean;
   key: string;
   value: string;
+}
+
+export interface FormDataField {
+  id: string;
+  enabled: boolean;
+  key: string;
+  type: 'text' | 'file';
+  value: string; // for text fields
+  file: File | null; // for file fields
+  fileName: string; // display name for file
 }
 
 // Request data (editable) with execution state

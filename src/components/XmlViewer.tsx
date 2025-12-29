@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
 
 interface XmlViewerProps {
-  content: string;
+  content: Blob;
 }
 
 function usePrefersDarkMode() {
@@ -56,14 +56,16 @@ export function XmlViewer({ content }: XmlViewerProps) {
   useEffect(() => {
     const highlight = async () => {
       try {
-        const code = formatXml(content);
+        const text = await content.text();
+        const code = formatXml(text);
         const html = await codeToHtml(code, {
           lang: 'xml',
           theme: prefersDark ? 'github-dark' : 'github-light',
         });
         setHighlightedCode(html);
       } catch {
-        setHighlightedCode(`<pre>${formatXml(content)}</pre>`);
+        const text = await content.text();
+        setHighlightedCode(`<pre>${formatXml(text)}</pre>`);
       }
     };
     highlight();
