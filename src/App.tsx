@@ -12,13 +12,10 @@ function StatusBar() {
   }
 
   return (
-    <div className="px-3 py-2 border-t border-white/5 bg-white/5 flex items-center gap-4 text-xs shrink-0">
-      <div className="flex items-center gap-2">
-        <span className="text-gray-500">Status:</span>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(request.response.statusCode)}`}>
-          {request.response.statusCode > 0 ? request.response.status : 'Error'}
-        </span>
-      </div>
+    <div className="px-3 py-2 flex items-center gap-4 text-xs shrink-0">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(request.response.statusCode)}`}>
+        {request.response.statusCode > 0 ? request.response.status : 'Error'}
+      </span>
       <div className="flex items-center gap-2">
         <span className="text-gray-500">Time:</span>
         <span className="text-gray-200 font-medium">{request.response.duration}ms</span>
@@ -32,18 +29,13 @@ function StatusBar() {
 }
 
 function AppContent() {
-  const { sidebarCollapsed } = useApiClient();
-
   return (
     <div className="h-screen flex bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
       {/* Sidebar */}
-      {!sidebarCollapsed && <Sidebar />}
+      <Sidebar />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden gap-2">
-        {/* Collapsed sidebar button */}
-        {sidebarCollapsed && <Sidebar />}
-
         {/* Request Panel */}
         <div className="flex-1 overflow-hidden min-h-0">
           <RequestPanel />
