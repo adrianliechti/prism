@@ -1,4 +1,4 @@
-// API request (sent to backend)
+// API request (stored in history for reference)
 export interface ClientRequest {
   method: string;
   url: string;
@@ -11,7 +11,7 @@ export interface ClientRequest {
   };
 }
 
-// API response (from backend)
+// API response (stored in history)
 export interface ClientResponse {
   status: string;
   statusCode: number;

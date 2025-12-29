@@ -15,7 +15,7 @@ func New() *Server {
 		Handler: mux,
 	}
 
-	mux.HandleFunc("POST /api/http/execute", s.handleHTTP)
+	mux.HandleFunc("/proxy/{scheme}/{host}/{path...}", s.handleProxy)
 
 	return &Server{
 		Handler: mux,

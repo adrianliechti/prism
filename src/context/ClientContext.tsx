@@ -159,14 +159,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         headersObj[h.key] = h.value;
       });
 
-      // Build params
-      const queryObj: Record<string, string> = {};
+      // Build query string
+      const queryParams = new URLSearchParams();
       req.query.filter(p => p.enabled && p.key).forEach(p => {
-        queryObj[p.key] = p.value;
+        queryParams.append(p.key, p.value);
       });
 
       // Build body based on type
-      let body = '';
+      let body: string | undefined;
       switch (req.body.type) {
         case 'json':
           body = req.body.content;
@@ -204,26 +204,60 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           break;
       }
 
-      const clientRequest: ClientRequest = {
+      // Get options
+      const options = req.httpRequest?.options ?? { insecure: false, redirect: true };
+
+      // Add proxy headers for options
+      if (options.insecure) {
+        headersObj['X-Prism-Insecure'] = 'true';
+      }
+      if (options.redirect) {
+        headersObj['X-Prism-Redirect'] = 'true';
+      }
+
+      // Build proxy URL: /proxy/{scheme}/{host}/{path}?query
+      const targetUrl = new URL(req.url);
+      let proxyUrl = '/proxy/' + targetUrl.protocol.slice(0, -1) + '/' + targetUrl.host + targetUrl.pathname;
+      const queryString = queryParams.toString();
+      if (queryString) {
+        proxyUrl += '?' + queryString;
+      }
+
+      // Store the request for history
+      const clientRequest = {
         method: req.method,
         url: req.url,
         headers: headersObj,
-        query: queryObj,
-        body,
-        options: req.httpRequest?.options ?? { insecure: false, redirect: true },
+        query: Object.fromEntries(queryParams),
+        body: body ?? '',
+        options,
       };
 
-      const response = await fetch('/api/http/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(clientRequest),
+      const startTime = performance.now();
+      const response = await fetch(proxyUrl, {
+        method: req.method,
+        headers: headersObj,
+        body: body && req.method !== 'GET' && req.method !== 'HEAD' ? body : undefined,
+      });
+      const duration = Math.round(performance.now() - startTime);
+
+      // Read response body
+      const responseBody = await response.text();
+
+      // Convert headers to Record
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
       });
 
-      if (!response.ok) {
-        throw new Error(`Proxy error: ${response.statusText}`);
-      }
+      const clientResponse = {
+        status: response.statusText || String(response.status),
+        statusCode: response.status,
+        headers: responseHeaders,
+        body: responseBody,
+        duration,
+      };
 
-      const clientResponse = await response.json();
       const executionTime = Date.now();
       
       // Update current request with response
