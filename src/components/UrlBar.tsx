@@ -1,30 +1,43 @@
-import { useApiClient } from '../context/ApiClientContext';
+import { useApiClient } from '../context/useApiClient';
 import { MethodSelector } from './MethodSelector';
 
 export function UrlBar() {
-  const { url, setUrl, executeRequest, isLoading } = useApiClient();
+  const { request, setUrl, executeRequest } = useApiClient();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     executeRequest();
   };
 
+  const url = request?.url ?? '';
+  const isLoading = request?.isLoading ?? false;
+
   return (
-    <form onSubmit={handleSubmit} className="flex items-center gap-0">
+    <form onSubmit={handleSubmit} className="flex items-center gap-2">
       <MethodSelector />
       <input
         type="text"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="Enter request URL"
-        className="flex-1 px-4 py-2 border border-l-0 border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="flex-1 px-3 py-1.5 bg-transparent text-gray-100 text-sm placeholder-gray-600 focus:outline-none"
       />
       <button
         type="submit"
         disabled={isLoading || !url}
-        className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-r-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="p-1.5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-md transition-colors text-gray-400 hover:text-gray-200"
+        title="Send request"
       >
-        {isLoading ? 'Sending...' : 'Send'}
+        {isLoading ? (
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+          </svg>
+        )}
       </button>
     </form>
   );

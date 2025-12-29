@@ -1,29 +1,30 @@
-import { useApiClient } from '../context/ApiClientContext';
+import { useApiClient } from '../context/useApiClient';
 import type { HttpMethod } from '../types/api';
 
 const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'];
 
 const methodColors: Record<HttpMethod, string> = {
-  GET: 'text-green-600',
-  POST: 'text-yellow-600',
-  PUT: 'text-blue-600',
-  PATCH: 'text-purple-600',
-  DELETE: 'text-red-600',
-  OPTIONS: 'text-gray-600',
-  HEAD: 'text-gray-600',
+  GET: 'text-emerald-400',
+  POST: 'text-amber-400',
+  PUT: 'text-blue-400',
+  PATCH: 'text-purple-400',
+  DELETE: 'text-rose-400',
+  OPTIONS: 'text-gray-400',
+  HEAD: 'text-gray-400',
 };
 
 export function MethodSelector() {
-  const { method, setMethod } = useApiClient();
+  const { request, setMethod } = useApiClient();
+  const method = request?.method ?? 'GET';
 
   return (
     <select
       value={method}
       onChange={(e) => setMethod(e.target.value as HttpMethod)}
-      className={`px-3 py-2 bg-gray-100 border border-gray-300 rounded-l-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 ${methodColors[method]}`}
+      className={`px-2 py-1 bg-transparent font-semibold text-xs focus:outline-none cursor-pointer ${methodColors[method]}`}
     >
       {methods.map((m) => (
-        <option key={m} value={m} className={methodColors[m]}>
+        <option key={m} value={m} className="bg-[#1a1a1a]">
           {m}
         </option>
       ))}

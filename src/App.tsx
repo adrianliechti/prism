@@ -1,39 +1,65 @@
 import { ApiClientProvider } from './context/ApiClientContext';
-import { UrlBar } from './components/UrlBar';
-import { RequestTabs } from './components/RequestTabs';
-import { ResponseViewer } from './components/ResponseViewer';
+import { useApiClient } from './context/useApiClient';
+import { Sidebar } from './components/Sidebar';
+import { RequestPanel } from './components/RequestPanel';
+import { getStatusBadge, formatBytes } from './utils/format';
+
+function StatusBar() {
+  const { request } = useApiClient();
+
+  if (!request?.response) {
+    return null;
+  }
+
+  return (
+    <div className="px-3 py-2 border-t border-white/5 bg-white/5 flex items-center gap-4 text-xs shrink-0">
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500">Status:</span>
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(request.response.statusCode)}`}>
+          {request.response.statusCode > 0 ? request.response.status : 'Error'}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500">Time:</span>
+        <span className="text-gray-200 font-medium">{request.response.duration}ms</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500">Size:</span>
+        <span className="text-gray-200 font-medium">{formatBytes(new Blob([request.response.body]).size)}</span>
+      </div>
+    </div>
+  );
+}
+
+function AppContent() {
+  const { sidebarCollapsed } = useApiClient();
+
+  return (
+    <div className="h-screen flex bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
+      {/* Sidebar */}
+      {!sidebarCollapsed && <Sidebar />}
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden gap-2">
+        {/* Collapsed sidebar button */}
+        {sidebarCollapsed && <Sidebar />}
+
+        {/* Request Panel */}
+        <div className="flex-1 overflow-hidden min-h-0">
+          <RequestPanel />
+        </div>
+
+        {/* Status Bar - Fixed at bottom */}
+        <StatusBar />
+      </div>
+    </div>
+  );
+}
 
 function App() {
   return (
     <ApiClientProvider>
-      <div className="min-h-screen bg-gray-100">
-        <div className="max-w-6xl mx-auto p-6">
-          {/* Header */}
-          <header className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-800">Prism</h1>
-            <p className="text-sm text-gray-600">API Client</p>
-          </header>
-
-          {/* Main Content */}
-          <div className="space-y-4">
-            {/* URL Bar */}
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <UrlBar />
-            </div>
-
-            {/* Request Configuration */}
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <RequestTabs />
-            </div>
-
-            {/* Response */}
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <h2 className="text-lg font-semibold text-gray-700 mb-3">Response</h2>
-              <ResponseViewer />
-            </div>
-          </div>
-        </div>
-      </div>
+      <AppContent />
     </ApiClientProvider>
   );
 }

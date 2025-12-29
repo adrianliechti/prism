@@ -9,33 +9,54 @@ export type BodyType = 'none' | 'json' | 'form-urlencoded' | 'form-data' | 'raw'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
-export interface ProxyRequest {
+// API request (sent to backend)
+export interface ApiRequest {
   method: string;
   url: string;
+  query: Record<string, string>;
   headers: Record<string, string>;
   body: string;
+  options: {
+    insecure: boolean;
+    redirect: boolean;
+  };
 }
 
-export interface ProxyResponse {
-  statusCode: number;
+// API response (from backend)
+export interface ApiResponse {
   status: string;
+  statusCode: number;
   headers: Record<string, string>;
   body: string;
   duration: number;
 }
 
-// For future history feature
-export interface RequestHistoryEntry {
+// Request tab state (UI)
+export interface RequestTab {
+  id: string;
+  name: string;
+  method: HttpMethod;
+  url: string;
+  headers: KeyValuePair[];
+  query: KeyValuePair[];
+  bodyType: BodyType;
+  bodyContent: string;
+  formData: KeyValuePair[];
+  insecure: boolean;
+  redirect: boolean;
+  response: ApiResponse | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+// History entry
+export interface HistoryEntry {
   id: string;
   timestamp: number;
-  request: {
-    method: HttpMethod;
-    url: string;
-    headers: KeyValuePair[];
-    queryParams: KeyValuePair[];
-    bodyType: BodyType;
-    bodyContent: string;
-    formData: KeyValuePair[];
-  };
-  response: ProxyResponse | null;
+  method: HttpMethod;
+  url: string;
+  statusCode: number | null;
+  duration: number | null;
+  request: Pick<RequestTab, 'headers' | 'query' | 'bodyType' | 'bodyContent' | 'formData' | 'insecure' | 'redirect'>;
+  response: ApiResponse | null;
 }

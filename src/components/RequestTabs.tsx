@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useApiClient } from '../context/ApiClientContext';
+import { useApiClient } from '../context/useApiClient';
 import { KeyValueEditor } from './KeyValueEditor';
 import type { BodyType } from '../types/api';
 
@@ -13,44 +13,93 @@ const bodyTypes: { value: BodyType; label: string }[] = [
   { value: 'raw', label: 'Raw' },
 ];
 
+const commonHttpHeaders = [
+  'Accept',
+  'Accept-Charset',
+  'Accept-Encoding',
+  'Accept-Language',
+  'Authorization',
+  'Cache-Control',
+  'Connection',
+  'Content-Disposition',
+  'Content-Encoding',
+  'Content-Length',
+  'Content-Type',
+  'Cookie',
+  'Date',
+  'ETag',
+  'Expect',
+  'Forwarded',
+  'From',
+  'Host',
+  'If-Match',
+  'If-Modified-Since',
+  'If-None-Match',
+  'If-Range',
+  'If-Unmodified-Since',
+  'Max-Forwards',
+  'Origin',
+  'Pragma',
+  'Proxy-Authorization',
+  'Range',
+  'Referer',
+  'TE',
+  'Trailer',
+  'Transfer-Encoding',
+  'Upgrade',
+  'User-Agent',
+  'Via',
+  'Warning',
+  'X-Api-Key',
+  'X-Correlation-ID',
+  'X-Forwarded-For',
+  'X-Forwarded-Host',
+  'X-Forwarded-Proto',
+  'X-Request-ID',
+  'X-Requested-With',
+];
+
 export function RequestTabs() {
-  const [activeTab, setActiveTab] = useState<Tab>('params');
+  const [activeTabId, setActiveTabId] = useState<Tab>('params');
   const {
-    headers,
+    request,
     setHeaders,
-    queryParams,
-    setQueryParams,
-    bodyType,
+    setQuery,
     setBodyType,
-    bodyContent,
     setBodyContent,
-    formData,
     setFormData,
   } = useApiClient();
 
+  const headers = request?.headers ?? [];
+  const query = request?.query ?? [];
+  const bodyType = request?.bodyType ?? 'none';
+  const bodyContent = request?.bodyContent ?? '';
+  const formData = request?.formData ?? [];
+
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: 'params', label: 'Query Params', count: queryParams.filter(p => p.key).length },
+    { id: 'params', label: 'Params', count: query.filter(p => p.key).length },
     { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
     { id: 'body', label: 'Body' },
   ];
 
   return (
-    <div className="border border-gray-300 rounded-lg overflow-hidden">
+    <div className="space-y-3">
       {/* Tab Headers */}
-      <div className="flex border-b border-gray-300 bg-gray-50">
+      <div role="tablist" className="inline-flex gap-1 p-0.5 bg-white/5 rounded-lg">
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-white -mb-px'
-                : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+            role="tab"
+            onClick={() => setActiveTabId(tab.id)}
+            className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
+              activeTabId === tab.id
+                ? 'bg-white/10 text-gray-100'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
             }`}
           >
             {tab.label}
             {tab.count !== undefined && tab.count > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-gray-200 rounded-full">
+              <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-white/10 text-gray-300 rounded-full">
                 {tab.count}
               </span>
             )}
@@ -59,65 +108,62 @@ export function RequestTabs() {
       </div>
 
       {/* Tab Content */}
-      <div className="p-4">
-        {activeTab === 'params' && (
+      <div>
+        {activeTabId === 'params' && (
           <KeyValueEditor
-            items={queryParams}
-            onChange={setQueryParams}
+            items={query}
+            onChange={setQuery}
             keyPlaceholder="Parameter"
             valuePlaceholder="Value"
           />
         )}
 
-        {activeTab === 'headers' && (
+        {activeTabId === 'headers' && (
           <KeyValueEditor
             items={headers}
             onChange={setHeaders}
             keyPlaceholder="Header"
             valuePlaceholder="Value"
+            keySuggestions={commonHttpHeaders}
           />
         )}
 
-        {activeTab === 'body' && (
-          <div className="space-y-4">
+        {activeTabId === 'body' && (
+          <div className="space-y-3">
             {/* Body Type Selector */}
-            <div className="flex gap-4">
+            <select
+              value={bodyType}
+              onChange={(e) => setBodyType(e.target.value as BodyType)}
+              className="px-3 py-1.5 text-xs bg-white/5 text-gray-100 border border-white/10 rounded-lg focus:outline-none focus:border-white/20 transition-colors"
+            >
               {bodyTypes.map((type) => (
-                <label key={type.value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="bodyType"
-                    value={type.value}
-                    checked={bodyType === type.value}
-                    onChange={() => setBodyType(type.value)}
-                    className="w-4 h-4 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-sm text-gray-700">{type.label}</span>
-                </label>
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
               ))}
-            </div>
+            </select>
 
             {/* Body Content */}
-            {bodyType === 'none' && (
-              <p className="text-sm text-gray-500 italic">This request does not have a body</p>
-            )}
+            {bodyType !== 'none' && (
+              <>
+                {(bodyType === 'json' || bodyType === 'raw') && (
+                  <textarea
+                    value={bodyContent}
+                    onChange={(e) => setBodyContent(e.target.value)}
+                    placeholder={bodyType === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
+                    className="w-full h-48 px-3 py-2 font-mono text-xs bg-white/5 text-gray-100 border border-white/10 rounded-lg focus:outline-none focus:border-white/20 resize-y placeholder-gray-500 transition-colors"
+                  />
+                )}
 
-            {(bodyType === 'json' || bodyType === 'raw') && (
-              <textarea
-                value={bodyContent}
-                onChange={(e) => setBodyContent(e.target.value)}
-                placeholder={bodyType === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
-                className="w-full h-48 px-3 py-2 font-mono text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-              />
-            )}
-
-            {(bodyType === 'form-urlencoded' || bodyType === 'form-data') && (
-              <KeyValueEditor
-                items={formData}
-                onChange={setFormData}
-                keyPlaceholder="Field"
-                valuePlaceholder="Value"
-              />
+                {(bodyType === 'form-urlencoded' || bodyType === 'form-data') && (
+                  <KeyValueEditor
+                    items={formData}
+                    onChange={setFormData}
+                    keyPlaceholder="Field"
+                    valuePlaceholder="Value"
+                  />
+                )}
+              </>
             )}
           </div>
         )}
