@@ -25,5 +25,6 @@ type Response struct {
 
 	Body string `json:"body,omitempty"`
 
-	Duration int64 `json:"duration,omitempty"`
+	Duration int64  `json:"duration,omitempty"`
+	Error    string `json:"error,omitempty"`
 }

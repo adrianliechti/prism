@@ -1,9 +1,9 @@
-import { useApiClient } from '../context/useApiClient';
+import { useClient } from '../context/useClient';
 import { MethodSelector } from './MethodSelector';
 import { PanelRightClose } from 'lucide-react';
 
 export function UrlBar() {
-  const { request, setUrl, executeRequest, sidebarCollapsed, toggleSidebar } = useApiClient();
+  const { request, setUrl, executeRequest, sidebarCollapsed, toggleSidebar, history } = useClient();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -11,11 +11,11 @@ export function UrlBar() {
   };
 
   const url = request?.url ?? '';
-  const isLoading = request?.isLoading ?? false;
+  const isLoading = request?.executing ?? false;
 
   return (
     <form onSubmit={handleSubmit} className="flex items-center gap-2">
-      {sidebarCollapsed && (
+      {sidebarCollapsed && history.length > 0 && (
         <button
           type="button"
           onClick={toggleSidebar}

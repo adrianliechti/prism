@@ -1,10 +1,10 @@
 import { UrlBar } from './UrlBar';
 import { RequestTabs } from './RequestTabs';
 import { ResponseViewer } from './ResponseViewer';
-import { useApiClient } from '../context/useApiClient';
+import { useClient } from '../context/useClient';
 
 export function RequestPanel() {
-  const { request, newRequest } = useApiClient();
+  const { request, newRequest } = useClient();
 
   if (!request) {
     return (
@@ -15,9 +15,9 @@ export function RequestPanel() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* URL Bar */}
-      <div className="pl-2 pr-3 py-2 border-b border-white/5 flex items-center gap-2">
+      <div className="pl-2 pr-3 py-2 border-b border-white/5 flex items-center gap-2 shrink-0">
         <div className="flex-1">
           <UrlBar />
         </div>
@@ -33,14 +33,16 @@ export function RequestPanel() {
       </div>
 
       {/* Request Configuration */}
-      <div className="pl-2 pr-3 py-2 border-b border-white/5 overflow-visible">
+      <div className="pl-2 pr-3 py-2 border-b border-white/5 overflow-visible shrink-0">
         <RequestTabs />
       </div>
 
       {/* Response */}
-      <div className="flex-1 pl-2 pr-3 py-2 overflow-auto min-h-0">
-        <h2 className="text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-2">Response</h2>
-        <ResponseViewer />
+      <div className="flex-1 pl-2 pr-3 py-2 flex flex-col min-h-0 overflow-hidden">
+        <h2 className="text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-2 shrink-0">Response</h2>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ResponseViewer />
+        </div>
       </div>
     </div>
   );

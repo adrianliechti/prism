@@ -1,5 +1,5 @@
-import { useApiClient } from '../context/useApiClient';
-import type { HttpMethod } from '../types/api';
+import { useClient } from '../context/useClient';
+import type { HttpMethod } from '../types/types';
 
 const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'];
 
@@ -14,7 +14,7 @@ const methodColors: Record<HttpMethod, string> = {
 };
 
 export function MethodSelector() {
-  const { request, setMethod } = useApiClient();
+  const { request, setMethod } = useClient();
   const method = request?.method ?? 'GET';
 
   return (

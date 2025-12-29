@@ -86,10 +86,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 		json.NewEncoder(w).Encode(Response{
 			StatusCode: 0,
-			Status:     "Error: " + err.Error(),
 			Headers:    map[string]string{},
 			Body:       "",
 			Duration:   duration,
+			Error:      err.Error(),
 		})
 
 		return

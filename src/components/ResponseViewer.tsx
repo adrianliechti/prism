@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useApiClient } from '../context/useApiClient';
+import { useClient } from '../context/useClient';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import { JSONViewer } from './JSONViewer';
-import { XMLViewer } from './XMLViewer';
-import { YAMLViewer } from './YAMLViewer';
+import { JsonViewer } from './JsonViewer';
+import { XmlViewer } from './XmlViewer';
+import { YamlViewer } from './YamlViewer';
 import { TextViewer } from './TextViewer';
 import { BinaryViewer } from './BinaryViewer';
 
@@ -46,13 +46,13 @@ function detectContentType(body: string, headers: Record<string, string>): Conte
 }
 
 export function ResponseViewer() {
-  const { request } = useApiClient();
+  const { request } = useClient();
   const [viewMode, setViewMode] = useState<ViewMode>('pretty');
   const [showHeaders, setShowHeaders] = useState(false);
 
-  const response = request?.response;
-  const isLoading = request?.isLoading ?? false;
-  const error = request?.error;
+  const response = request?.httpResponse;
+  const isLoading = request?.executing ?? false;
+  const error = response?.error;
 
   if (isLoading) {
     return (
@@ -96,11 +96,11 @@ export function ResponseViewer() {
 
     switch (contentType) {
       case 'json':
-        return <JSONViewer content={response.body} />;
+        return <JsonViewer content={response.body} />;
       case 'xml':
-        return <XMLViewer content={response.body} />;
+        return <XmlViewer content={response.body} />;
       case 'yaml':
-        return <YAMLViewer content={response.body} />;
+        return <YamlViewer content={response.body} />;
       case 'binary':
         return <BinaryViewer content={response.body} />;
       case 'text':
@@ -110,9 +110,9 @@ export function ResponseViewer() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* View Controls */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 shrink-0 mb-4">
         {contentType !== 'binary' && (
           <div className="flex gap-1 p-1 bg-white/5 rounded-lg">
             <button
@@ -151,7 +151,7 @@ export function ResponseViewer() {
 
       {/* Headers Table */}
       {showHeaders && (
-        <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden">
+        <div className="bg-white/5 rounded-xl border border-white/10 overflow-hidden shrink-0 mb-4">
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/10">
@@ -172,7 +172,9 @@ export function ResponseViewer() {
       )}
 
       {/* Body */}
-      {renderContent()}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {renderContent()}
+      </div>
     </div>
   );
 }

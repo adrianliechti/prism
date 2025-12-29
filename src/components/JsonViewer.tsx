@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
 
-interface JSONViewerProps {
+interface JsonViewerProps {
   content: string;
 }
 
-export function JSONViewer({ content }: JSONViewerProps) {
+export function JsonViewer({ content }: JsonViewerProps) {
   const [highlightedCode, setHighlightedCode] = useState<string>('');
 
   const formatJson = (str: string): string => {
@@ -34,11 +34,9 @@ export function JSONViewer({ content }: JSONViewerProps) {
   }, [content]);
 
   return (
-    <div className="overflow-hidden">
-      <div 
-        className="overflow-auto text-xs max-h-[50vh] [&_pre]:bg-transparent! [&_pre]:p-0! [&_pre]:m-0! [&_code]:bg-transparent!"
-        dangerouslySetInnerHTML={{ __html: highlightedCode }}
-      />
-    </div>
+    <div 
+      className="text-xs [&_pre]:bg-transparent! [&_pre]:p-0! [&_pre]:m-0! [&_pre]:overflow-visible! [&_code]:bg-transparent! [&_code]:block!"
+      dangerouslySetInnerHTML={{ __html: highlightedCode }}
+    />
   );
 }

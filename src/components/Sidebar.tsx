@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { useApiClient } from '../context/useApiClient';
-import type { HttpMethod, HistoryEntry } from '../types/api';
+import { useClient } from '../context/useClient';
+import type { HttpMethod, Request } from '../types/types';
 import { PanelRightOpen, Trash2 } from 'lucide-react';
 
 const methodColors: Record<HttpMethod, string> = {
@@ -42,12 +42,12 @@ function getHostname(url: string): string {
 
 interface HostGroup {
   hostname: string;
-  entries: HistoryEntry[];
+  entries: Request[];
   latestTimestamp: number;
 }
 
-function groupByHostname(history: HistoryEntry[]): HostGroup[] {
-  const groups = new Map<string, HistoryEntry[]>();
+function groupByHostname(history: Request[]): HostGroup[] {
+  const groups = new Map<string, Request[]>();
   
   for (const entry of history) {
     const hostname = getHostname(entry.url);
@@ -61,17 +61,18 @@ function groupByHostname(history: HistoryEntry[]): HostGroup[] {
     .map(([hostname, entries]) => ({
       hostname,
       entries,
-      latestTimestamp: Math.max(...entries.map(e => e.timestamp)),
+      latestTimestamp: Math.max(...entries.map(e => e.executionTime ?? 0)),
     }))
     .sort((a, b) => b.latestTimestamp - a.latestTimestamp);
 }
 
 export function Sidebar() {
-  const { history, sidebarCollapsed, loadFromHistory, deleteHistoryEntry, clearHistory, toggleSidebar } = useApiClient();
+  const { history, sidebarCollapsed, loadFromHistory, deleteHistoryEntry, clearHistory, toggleSidebar } = useClient();
   
   const groupedHistory = useMemo(() => groupByHostname(history), [history]);
 
-  if (sidebarCollapsed) {
+  // Hide sidebar completely when no history
+  if (history.length === 0 || sidebarCollapsed) {
     return null;
   }
 
@@ -121,7 +122,7 @@ export function Sidebar() {
                       onClick={() => loadFromHistory(entry)}
                     >
                       <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entry.statusCode)}`}
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entry.httpResponse?.statusCode ?? null)}`}
                       />
                       <span className={`text-[10px] font-semibold w-7 shrink-0 ${methodColors[entry.method]}`}>
                         {entry.method.slice(0, 3)}
@@ -138,7 +139,7 @@ export function Sidebar() {
                       </span>
                       <div className="flex items-center justify-end text-[10px] text-gray-600 shrink-0 w-12 h-5">
                         <span className="group-hover:hidden">
-                          {formatTimestamp(entry.timestamp)}
+                          {formatTimestamp(entry.executionTime ?? entry.creationTime)}
                         </span>
                         <button
                           onClick={(e) => {

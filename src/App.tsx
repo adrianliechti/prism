@@ -1,28 +1,30 @@
-import { ApiClientProvider } from './context/ApiClientContext';
-import { useApiClient } from './context/useApiClient';
+import { ClientProvider } from './context/ClientContext';
+import { useClient } from './context/useClient';
 import { Sidebar } from './components/Sidebar';
 import { RequestPanel } from './components/RequestPanel';
 import { getStatusBadge, formatBytes } from './utils/format';
 
 function StatusBar() {
-  const { request } = useApiClient();
+  const { request } = useClient();
 
-  if (!request?.response) {
+  if (!request?.httpResponse) {
     return null;
   }
 
+  const response = request.httpResponse;
+
   return (
     <div className="px-3 py-2 flex items-center gap-4 text-xs shrink-0">
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(request.response.statusCode)}`}>
-        {request.response.statusCode > 0 ? request.response.status : 'Error'}
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(response.statusCode)}`}>
+        {response.statusCode > 0 ? response.status : 'Error'}
       </span>
       <div className="flex items-center gap-2">
         <span className="text-gray-500">Time:</span>
-        <span className="text-gray-200 font-medium">{request.response.duration}ms</span>
+        <span className="text-gray-200 font-medium">{response.duration}ms</span>
       </div>
       <div className="flex items-center gap-2">
         <span className="text-gray-500">Size:</span>
-        <span className="text-gray-200 font-medium">{formatBytes(new Blob([request.response.body]).size)}</span>
+        <span className="text-gray-200 font-medium">{formatBytes(new Blob([response.body]).size)}</span>
       </div>
     </div>
   );
@@ -50,9 +52,9 @@ function AppContent() {
 
 function App() {
   return (
-    <ApiClientProvider>
+    <ClientProvider>
       <AppContent />
-    </ApiClientProvider>
+    </ClientProvider>
   );
 }
 

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
 
-interface YAMLViewerProps {
+interface YamlViewerProps {
   content: string;
 }
 
-export function YAMLViewer({ content }: YAMLViewerProps) {
+export function YamlViewer({ content }: YamlViewerProps) {
   const [highlightedCode, setHighlightedCode] = useState<string>('');
 
   useEffect(() => {
@@ -24,11 +24,9 @@ export function YAMLViewer({ content }: YAMLViewerProps) {
   }, [content]);
 
   return (
-    <div className="overflow-hidden">
-      <div 
-        className="overflow-auto text-xs max-h-[50vh] [&_pre]:bg-transparent! [&_pre]:p-0! [&_pre]:m-0! [&_code]:bg-transparent!"
-        dangerouslySetInnerHTML={{ __html: highlightedCode }}
-      />
-    </div>
+    <div 
+      className="text-xs [&_pre]:bg-transparent! [&_pre]:p-0! [&_pre]:m-0! [&_pre]:overflow-visible! [&_code]:bg-transparent! [&_code]:block!"
+      dangerouslySetInnerHTML={{ __html: highlightedCode }}
+    />
   );
 }

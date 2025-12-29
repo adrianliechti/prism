@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { useApiClient } from '../context/useApiClient';
+import { useClient } from '../context/useClient';
 import { KeyValueEditor } from './KeyValueEditor';
 import { CodeEditor } from './CodeEditor';
-import type { BodyType } from '../types/api';
+import type { RequestBody } from '../types/types';
 
 type Tab = 'headers' | 'params' | 'body';
+
+type BodyType = RequestBody['type'];
 
 const bodyTypes: { value: BodyType; label: string }[] = [
   { value: 'none', label: 'None' },
@@ -66,16 +68,32 @@ export function RequestTabs() {
     request,
     setHeaders,
     setQuery,
-    setBodyType,
-    setBodyContent,
-    setFormData,
-  } = useApiClient();
+    setBody,
+  } = useClient();
 
   const headers = request?.headers ?? [];
   const query = request?.query ?? [];
-  const bodyType = request?.bodyType ?? 'none';
-  const bodyContent = request?.bodyContent ?? '';
-  const formData = request?.formData ?? [];
+  const body = request?.body ?? { type: 'none' as const };
+
+  const handleBodyTypeChange = (type: BodyType) => {
+    switch (type) {
+      case 'none':
+        setBody({ type: 'none' });
+        break;
+      case 'json':
+        setBody({ type: 'json', content: body.type === 'json' ? body.content : '' });
+        break;
+      case 'raw':
+        setBody({ type: 'raw', content: body.type === 'raw' ? body.content : '' });
+        break;
+      case 'form-urlencoded':
+        setBody({ type: 'form-urlencoded', data: body.type === 'form-urlencoded' ? body.data : [{ id: Math.random().toString(36).substring(2, 9), enabled: true, key: '', value: '' }] });
+        break;
+      case 'form-data':
+        setBody({ type: 'form-data', data: body.type === 'form-data' ? body.data : [{ id: Math.random().toString(36).substring(2, 9), enabled: true, key: '', value: '' }] });
+        break;
+    }
+  };
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'params', label: 'Params', count: query.filter(p => p.key).length },
@@ -110,8 +128,8 @@ export function RequestTabs() {
         </div>
         {activeTabId === 'body' && (
           <select
-            value={bodyType}
-            onChange={(e) => setBodyType(e.target.value as BodyType)}
+            value={body.type}
+            onChange={(e) => handleBodyTypeChange(e.target.value as BodyType)}
             className="px-2 py-1 text-[11px] bg-transparent text-gray-500 focus:outline-none cursor-pointer"
           >
             {bodyTypes.map((type) => (
@@ -144,21 +162,21 @@ export function RequestTabs() {
           />
         )}
 
-        {activeTabId === 'body' && bodyType !== 'none' && (
+        {activeTabId === 'body' && body.type !== 'none' && (
           <>
-            {(bodyType === 'json' || bodyType === 'raw') && (
+            {(body.type === 'json' || body.type === 'raw') && (
               <CodeEditor
-                value={bodyContent}
-                onChange={setBodyContent}
-                language={bodyType === 'json' ? 'json' : 'text'}
-                placeholder={bodyType === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
+                value={body.content}
+                onChange={(content) => setBody({ ...body, content })}
+                language={body.type === 'json' ? 'json' : 'text'}
+                placeholder={body.type === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
               />
             )}
 
-            {(bodyType === 'form-urlencoded' || bodyType === 'form-data') && (
+            {(body.type === 'form-urlencoded' || body.type === 'form-data') && (
               <KeyValueEditor
-                items={formData}
-                onChange={setFormData}
+                items={body.data}
+                onChange={(data) => setBody({ ...body, data })}
                 keyPlaceholder="Field"
                 valuePlaceholder="Value"
               />
