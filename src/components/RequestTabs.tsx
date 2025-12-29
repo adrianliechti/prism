@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApiClient } from '../context/useApiClient';
 import { KeyValueEditor } from './KeyValueEditor';
+import { CodeEditor } from './CodeEditor';
 import type { BodyType } from '../types/api';
 
 type Tab = 'headers' | 'params' | 'body';
@@ -85,26 +86,41 @@ export function RequestTabs() {
   return (
     <div className="space-y-3">
       {/* Tab Headers */}
-      <div role="tablist" className="inline-flex gap-1 p-0.5 bg-white/5 rounded-lg">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            onClick={() => setActiveTabId(tab.id)}
-            className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
-              activeTabId === tab.id
-                ? 'bg-white/10 text-gray-100'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
-            }`}
+      <div className="flex items-center gap-2">
+        <div role="tablist" className="inline-flex gap-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              onClick={() => setActiveTabId(tab.id)}
+              className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
+                activeTabId === tab.id
+                  ? 'bg-white/10 text-gray-100'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+              }`}
+            >
+              {tab.label}
+              {tab.count !== undefined && tab.count > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-white/10 text-gray-300 rounded-full">
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        {activeTabId === 'body' && (
+          <select
+            value={bodyType}
+            onChange={(e) => setBodyType(e.target.value as BodyType)}
+            className="px-2 py-1 text-[11px] bg-transparent text-gray-500 focus:outline-none cursor-pointer"
           >
-            {tab.label}
-            {tab.count !== undefined && tab.count > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-white/10 text-gray-300 rounded-full">
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
+            {bodyTypes.map((type) => (
+              <option key={type.value} value={type.value} className="bg-[#1a1a1a]">
+                {type.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -128,44 +144,26 @@ export function RequestTabs() {
           />
         )}
 
-        {activeTabId === 'body' && (
-          <div className="space-y-3">
-            {/* Body Type Selector */}
-            <select
-              value={bodyType}
-              onChange={(e) => setBodyType(e.target.value as BodyType)}
-              className="px-3 py-1.5 text-xs bg-white/5 text-gray-100 border border-white/10 rounded-lg focus:outline-none focus:border-white/20 transition-colors"
-            >
-              {bodyTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-
-            {/* Body Content */}
-            {bodyType !== 'none' && (
-              <>
-                {(bodyType === 'json' || bodyType === 'raw') && (
-                  <textarea
-                    value={bodyContent}
-                    onChange={(e) => setBodyContent(e.target.value)}
-                    placeholder={bodyType === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
-                    className="w-full h-48 px-3 py-2 font-mono text-xs bg-white/5 text-gray-100 border border-white/10 rounded-lg focus:outline-none focus:border-white/20 resize-y placeholder-gray-500 transition-colors"
-                  />
-                )}
-
-                {(bodyType === 'form-urlencoded' || bodyType === 'form-data') && (
-                  <KeyValueEditor
-                    items={formData}
-                    onChange={setFormData}
-                    keyPlaceholder="Field"
-                    valuePlaceholder="Value"
-                  />
-                )}
-              </>
+        {activeTabId === 'body' && bodyType !== 'none' && (
+          <>
+            {(bodyType === 'json' || bodyType === 'raw') && (
+              <CodeEditor
+                value={bodyContent}
+                onChange={setBodyContent}
+                language={bodyType === 'json' ? 'json' : 'text'}
+                placeholder={bodyType === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
+              />
             )}
-          </div>
+
+            {(bodyType === 'form-urlencoded' || bodyType === 'form-data') && (
+              <KeyValueEditor
+                items={formData}
+                onChange={setFormData}
+                keyPlaceholder="Field"
+                valuePlaceholder="Value"
+              />
+            )}
+          </>
         )}
       </div>
     </div>

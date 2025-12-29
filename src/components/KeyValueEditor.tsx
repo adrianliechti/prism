@@ -55,7 +55,7 @@ export function KeyValueEditor({
   };
 
   return (
-    <div className="bg-white/5 rounded-lg border border-white/10">
+    <div>
       <table className="w-full">
         <tbody>
           {items.map((item) => (
