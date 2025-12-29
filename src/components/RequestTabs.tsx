@@ -113,13 +113,13 @@ export function RequestTabs() {
               onClick={() => setActiveTabId(tab.id)}
               className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
                 activeTabId === tab.id
-                  ? 'bg-white/10 text-gray-100'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                  ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
+                  : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
               }`}
             >
               {tab.label}
               {tab.count !== undefined && tab.count > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-white/10 text-gray-300 rounded-full">
+                <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-neutral-200 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 rounded-full">
                   {tab.count}
                 </span>
               )}
@@ -130,10 +130,10 @@ export function RequestTabs() {
           <select
             value={body.type}
             onChange={(e) => handleBodyTypeChange(e.target.value as BodyType)}
-            className="px-2 py-1 text-[11px] bg-transparent text-gray-500 focus:outline-none cursor-pointer"
+            className="px-2 py-1 text-[11px] bg-transparent text-neutral-500 focus:outline-none cursor-pointer"
           >
             {bodyTypes.map((type) => (
-              <option key={type.value} value={type.value} className="bg-[#1a1a1a]">
+              <option key={type.value} value={type.value} className="bg-white dark:bg-[#1a1a1a]">
                 {type.label}
               </option>
             ))}

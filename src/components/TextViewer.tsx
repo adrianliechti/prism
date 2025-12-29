@@ -4,7 +4,7 @@ interface TextViewerProps {
 
 export function TextViewer({ content }: TextViewerProps) {
   return (
-    <pre className="text-xs font-mono text-gray-200 whitespace-pre-wrap">
+    <pre className="text-xs font-mono text-neutral-700 dark:text-neutral-200 whitespace-pre-wrap">
       {content}
     </pre>
   );

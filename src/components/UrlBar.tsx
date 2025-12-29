@@ -19,7 +19,7 @@ export function UrlBar() {
         <button
           type="button"
           onClick={toggleSidebar}
-          className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-gray-400 hover:text-gray-200"
+          className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
           title="Show sidebar"
         >
           <PanelRightClose className="w-4 h-4" />
@@ -31,12 +31,12 @@ export function UrlBar() {
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="Enter request URL"
-        className="flex-1 px-3 py-1.5 bg-transparent text-gray-100 text-sm placeholder-gray-600 focus:outline-none"
+        className="flex-1 px-3 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
       />
       <button
         type="submit"
         disabled={isLoading || !url}
-        className="p-1.5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-md transition-colors text-gray-400 hover:text-gray-200"
+        className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
         title="Send request"
       >
         {isLoading ? (

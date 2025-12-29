@@ -5,8 +5,24 @@ interface JsonViewerProps {
   content: string;
 }
 
+function usePrefersDarkMode() {
+  const [prefersDark, setPrefersDark] = useState(() => 
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
+  return prefersDark;
+}
+
 export function JsonViewer({ content }: JsonViewerProps) {
   const [highlightedCode, setHighlightedCode] = useState<string>('');
+  const prefersDark = usePrefersDarkMode();
 
   const formatJson = (str: string): string => {
     try {
@@ -23,7 +39,7 @@ export function JsonViewer({ content }: JsonViewerProps) {
         const code = formatJson(content);
         const html = await codeToHtml(code, {
           lang: 'json',
-          theme: 'github-dark',
+          theme: prefersDark ? 'github-dark' : 'github-light',
         });
         setHighlightedCode(html);
       } catch {
@@ -31,7 +47,7 @@ export function JsonViewer({ content }: JsonViewerProps) {
       }
     };
     highlight();
-  }, [content]);
+  }, [content, prefersDark]);
 
   return (
     <div 

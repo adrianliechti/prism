@@ -5,8 +5,24 @@ interface XmlViewerProps {
   content: string;
 }
 
+function usePrefersDarkMode() {
+  const [prefersDark, setPrefersDark] = useState(() => 
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
+  return prefersDark;
+}
+
 export function XmlViewer({ content }: XmlViewerProps) {
   const [highlightedCode, setHighlightedCode] = useState<string>('');
+  const prefersDark = usePrefersDarkMode();
 
   const formatXml = (xml: string): string => {
     try {
@@ -43,7 +59,7 @@ export function XmlViewer({ content }: XmlViewerProps) {
         const code = formatXml(content);
         const html = await codeToHtml(code, {
           lang: 'xml',
-          theme: 'github-dark',
+          theme: prefersDark ? 'github-dark' : 'github-light',
         });
         setHighlightedCode(html);
       } catch {
@@ -51,7 +67,7 @@ export function XmlViewer({ content }: XmlViewerProps) {
       }
     };
     highlight();
-  }, [content]);
+  }, [content, prefersDark]);
 
   return (
     <div 

@@ -8,7 +8,7 @@ export function RequestPanel() {
 
   if (!request) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-500">
+      <div className="flex-1 flex items-center justify-center text-neutral-400 dark:text-neutral-500">
         No active request
       </div>
     );
@@ -17,13 +17,13 @@ export function RequestPanel() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* URL Bar */}
-      <div className="pl-2 pr-3 py-2 border-b border-white/5 flex items-center gap-2 shrink-0">
+      <div className="pl-2 pr-3 py-2 border-b border-neutral-200 dark:border-white/5 flex items-center gap-2 shrink-0">
         <div className="flex-1">
           <UrlBar />
         </div>
         <button
           onClick={newRequest}
-          className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-gray-400 hover:text-gray-200"
+          className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
           title="New request"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,13 +33,13 @@ export function RequestPanel() {
       </div>
 
       {/* Request Configuration */}
-      <div className="pl-2 pr-3 py-2 border-b border-white/5 overflow-visible shrink-0">
+      <div className="pl-2 pr-3 py-2 border-b border-neutral-200 dark:border-white/5 overflow-visible shrink-0">
         <RequestTabs />
       </div>
 
       {/* Response */}
       <div className="flex-1 pl-2 pr-3 py-2 flex flex-col min-h-0 overflow-hidden">
-        <h2 className="text-[10px] font-medium text-gray-500 uppercase tracking-wider mb-2 shrink-0">Response</h2>
+        <h2 className="text-[10px] font-medium text-neutral-400 dark:text-neutral-500 uppercase tracking-wider mb-2 shrink-0">Response</h2>
         <div className="flex-1 min-h-0 overflow-hidden">
           <ResponseViewer />
         </div>

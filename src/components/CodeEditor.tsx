@@ -31,7 +31,7 @@ export function CodeEditor({ value, onChange, placeholder }: CodeEditorProps) {
       placeholder={placeholder}
       spellCheck={false}
       rows={3}
-      className="w-full font-mono text-xs text-gray-100 bg-transparent focus:outline-none placeholder-gray-600 resize-none overflow-auto"
+      className="w-full font-mono text-xs text-neutral-800 dark:text-neutral-100 bg-transparent focus:outline-none placeholder-neutral-400 dark:placeholder-neutral-600 resize-none overflow-auto"
     />
   );
 }

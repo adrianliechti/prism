@@ -19,12 +19,12 @@ function StatusBar() {
         {response.statusCode > 0 ? response.status : 'Error'}
       </span>
       <div className="flex items-center gap-2">
-        <span className="text-gray-500">Time:</span>
-        <span className="text-gray-200 font-medium">{response.duration}ms</span>
+        <span className="text-neutral-400 dark:text-neutral-500">Time:</span>
+        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{response.duration}ms</span>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-gray-500">Size:</span>
-        <span className="text-gray-200 font-medium">{formatBytes(new Blob([response.body]).size)}</span>
+        <span className="text-neutral-400 dark:text-neutral-500">Size:</span>
+        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(new Blob([response.body]).size)}</span>
       </div>
     </div>
   );
@@ -32,7 +32,7 @@ function StatusBar() {
 
 function AppContent() {
   return (
-    <div className="h-screen flex bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
+    <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
       {/* Sidebar */}
       <Sidebar />
 

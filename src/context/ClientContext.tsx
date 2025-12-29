@@ -310,7 +310,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
     const newReq = createNewRequest();
-    newReq.id = generateId();
+    // Preserve the original entry's ID so re-executing updates the history entry
+    newReq.id = entry.id;
     newReq.name = entry.name;
     newReq.method = entry.method;
     newReq.url = entry.url;
@@ -328,6 +329,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     // Preserve httpRequest options if available
     if (entry.httpRequest) {
       newReq.httpRequest = { ...entry.httpRequest };
+    }
+    // Restore the response from history
+    if (entry.httpResponse) {
+      newReq.httpResponse = entry.httpResponse;
     }
     
     setState(prev => ({
