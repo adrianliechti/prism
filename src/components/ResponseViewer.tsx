@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useClient } from '../context/useClient';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2, SendHorizontal } from 'lucide-react';
 import { JsonViewer } from './JsonViewer';
 import { XmlViewer } from './XmlViewer';
 import { YamlViewer } from './YamlViewer';
 import { TextViewer } from './TextViewer';
 import { BinaryViewer } from './BinaryViewer';
 import { ImageViewer } from './ImageViewer';
+import { EventStreamViewer } from './EventStreamViewer';
 
 type ViewMode = 'pretty' | 'raw';
-type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary' | 'image';
+type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary' | 'image' | 'sse';
 
 // Known binary MIME types
 const BINARY_MIME_PATTERNS = [
@@ -69,6 +70,11 @@ const TEXT_MIME_PATTERNS = [
 
 function detectContentType(headers: Record<string, string>): ContentType {
   const contentType = headers['content-type']?.toLowerCase() || '';
+  
+  // Check for SSE (Server-Sent Events)
+  if (contentType.includes('text/event-stream')) {
+    return 'sse';
+  }
   
   // Check for image types first
   if (IMAGE_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
@@ -138,8 +144,9 @@ export function ResponseViewer() {
 
   if (!response) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <p className="text-sm text-neutral-400 dark:text-neutral-500">Enter a URL and click Send to see the response</p>
+      <div className="h-full flex flex-col items-center justify-center">
+        <SendHorizontal className="w-12 h-12 text-neutral-300 dark:text-neutral-600 mb-4" />
+        <p className="text-sm text-neutral-400 dark:text-neutral-500">Hit Send to see what happens</p>
       </div>
     );
   }
@@ -158,6 +165,8 @@ export function ResponseViewer() {
         return <XmlViewer content={response.body} />;
       case 'yaml':
         return <YamlViewer content={response.body} />;
+      case 'sse':
+        return <EventStreamViewer content={response.body} />;
       case 'image':
         return <ImageViewer content={response.body} />;
       case 'binary':

@@ -39,7 +39,9 @@ export function RequestPanel() {
 
       {/* Response */}
       <div className="flex-1 pl-2 pr-3 py-2 flex flex-col min-h-0 overflow-hidden">
-        <h2 className="text-[10px] font-medium text-neutral-400 dark:text-neutral-500 uppercase tracking-wider mb-2 shrink-0">Response</h2>
+        {request.httpResponse && (
+          <h2 className="text-[10px] font-medium text-neutral-400 dark:text-neutral-500 uppercase tracking-wider mb-2 shrink-0">Response</h2>
+        )}
         <div className="flex-1 min-h-0 overflow-hidden">
           <ResponseViewer />
         </div>

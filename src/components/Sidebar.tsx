@@ -124,8 +124,8 @@ export function Sidebar() {
                       <span
                         className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entry.httpResponse?.statusCode ?? null)}`}
                       />
-                      <span className={`text-[10px] font-semibold w-7 shrink-0 ${methodColors[entry.method]}`}>
-                        {entry.method.slice(0, 3)}
+                      <span className={`text-[10px] font-semibold shrink-0 ${methodColors[entry.method]}`}>
+                        {entry.method}
                       </span>
                       <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.url}>
                         {(() => {

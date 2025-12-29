@@ -2,6 +2,7 @@
 import { createContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { KeyValuePair, HttpMethod, Request, RequestBody } from '../types/types';
 import type { ClientRequest } from '../types/client';
+import { getValue, setValue } from '../lib/db';
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
@@ -62,42 +63,110 @@ interface ClientContextType {
 
 export const ClientContext = createContext<ClientContextType | null>(null);
 
-const STORAGE_KEY = 'prism-history';
+const STORE_KEY = 'requests';
 
-function loadHistoryFromStorage(): Request[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+// Serialized format for storing in IndexedDB
+interface SerializedRequest extends Omit<Request, 'httpResponse'> {
+  httpResponse: {
+    status: string;
+    statusCode: number;
+    headers: Record<string, string>;
+    content: string;
+    contentType: string;
+    duration: number;
+    error?: string;
+  } | null;
 }
 
-function saveHistoryToStorage(history: Request[]) {
-  try {
-    // Strip out File objects which can't be serialized
-    const serializableHistory = history.map(req => {
-      if (req.body.type === 'form-data') {
-        return {
-          ...req,
-          body: {
-            ...req.body,
-            data: req.body.data.map(f => ({ ...f, file: null })),
-          },
-        };
-      }
-      if (req.body.type === 'binary') {
-        return {
-          ...req,
-          body: { ...req.body, file: null },
-        };
-      }
-      return req;
-    });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableHistory));
-  } catch {
-    // Ignore storage errors
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      // Remove the data URL prefix (e.g., "data:application/json;base64,")
+      const base64 = result.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64ToBlob(base64: string, type: string): Blob {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
   }
+  return new Blob([bytes], { type });
+}
+
+async function serializeHistory(history: Request[]): Promise<SerializedRequest[]> {
+  return Promise.all(history.map(async req => {
+    // Handle body serialization
+    let body = req.body;
+    if (req.body.type === 'form-data') {
+      body = {
+        ...req.body,
+        data: req.body.data.map(f => ({ ...f, file: null })),
+      };
+    } else if (req.body.type === 'binary') {
+      body = { ...req.body, file: null };
+    }
+
+    // Handle response body serialization (Blob -> base64)
+    let httpResponse: SerializedRequest['httpResponse'] = null;
+    if (req.httpResponse) {
+      const content = req.httpResponse.body instanceof Blob
+        ? await blobToBase64(req.httpResponse.body)
+        : '';
+      const contentType = req.httpResponse.body instanceof Blob
+        ? req.httpResponse.body.type
+        : 'application/octet-stream';
+      
+      httpResponse = {
+        status: req.httpResponse.status,
+        statusCode: req.httpResponse.statusCode,
+        headers: req.httpResponse.headers,
+        content,
+        contentType,
+        duration: req.httpResponse.duration,
+        error: req.httpResponse.error,
+      };
+    }
+
+    return {
+      ...req,
+      body,
+      httpResponse,
+    };
+  }));
+}
+
+function deserializeHistory(serialized: SerializedRequest[]): Request[] {
+  return serialized.map(req => {
+    // Reconstruct Blob from base64
+    let httpResponse = null;
+    if (req.httpResponse) {
+      const body = req.httpResponse.content
+        ? base64ToBlob(req.httpResponse.content, req.httpResponse.contentType)
+        : new Blob([]);
+      
+      httpResponse = {
+        status: req.httpResponse.status,
+        statusCode: req.httpResponse.statusCode,
+        headers: req.httpResponse.headers,
+        body,
+        duration: req.httpResponse.duration,
+        error: req.httpResponse.error,
+      };
+    }
+
+    return {
+      ...req,
+      httpResponse,
+    };
+  });
 }
 
 const initialState: ClientState = {
@@ -107,15 +176,28 @@ const initialState: ClientState = {
 };
 
 export function ClientProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<ClientState>(() => ({
-    ...initialState,
-    history: loadHistoryFromStorage(),
-  }));
+  const [state, setState] = useState<ClientState>(initialState);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Persist history to localStorage
+  // Load history from IndexedDB on mount
   useEffect(() => {
-    saveHistoryToStorage(state.history);
-  }, [state.history]);
+    getValue<SerializedRequest[]>(STORE_KEY).then(serialized => {
+      if (serialized) {
+        const history = deserializeHistory(serialized);
+        setState(prev => ({ ...prev, history }));
+      }
+      setIsLoaded(true);
+    });
+  }, []);
+
+  // Persist history to IndexedDB
+  useEffect(() => {
+    if (isLoaded) {
+      serializeHistory(state.history).then(serialized => {
+        setValue(STORE_KEY, serialized);
+      });
+    }
+  }, [state.history, isLoaded]);
 
   // Helper to update request
   const updateRequest = useCallback((updates: Partial<Request>) => {

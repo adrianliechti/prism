@@ -8,8 +8,6 @@ import (
 )
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
-	println(r.URL.String())
-
 	// CORS headers - allow everything
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
@@ -35,8 +33,6 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Fix the request URL to the correct path
 	r.URL.Path = "/" + path
 	r.URL.RawPath = ""
-
-	println(targetURL.String(), r.URL.String())
 
 	transport := &http.Transport{}
 
