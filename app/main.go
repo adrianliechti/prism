@@ -28,8 +28,8 @@ func main() {
 	options := &options.App{
 		Title: "Prism",
 
-		Width:  1280,
-		Height: 768,
+		Width:  1200,
+		Height: 675,
 
 		AssetServer: &assetserver.Options{
 			Assets: prism.DistFS,

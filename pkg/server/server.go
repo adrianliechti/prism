@@ -28,6 +28,11 @@ func New(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/proxy/grpc/{host}/{path...}", s.handleGRPC)
 	mux.HandleFunc("/proxy/{scheme}/{host}/{path...}", s.handleProxy)
 
+	mux.HandleFunc("GET /data/{store}", s.handleDataList)
+	mux.HandleFunc("GET /data/{store}/{id}", s.handleDataGet)
+	mux.HandleFunc("PUT /data/{store}/{id}", s.handleDataPut)
+	mux.HandleFunc("DELETE /data/{store}/{id}", s.handleDataDelete)
+
 	if cfg.OpenAI != nil {
 		target, err := url.Parse(cfg.OpenAI.URL)
 
