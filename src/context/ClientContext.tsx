@@ -2,7 +2,7 @@
 import { createContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { KeyValuePair, HttpMethod, Protocol, Request, RequestBody, Variable } from '../types/types';
 import type { ClientRequest } from '../types/client';
-import { getValue, setValue } from '../lib/db';
+import { getValue, setValue, deleteValue, listEntries } from '../lib/data';
 import { resolveVariables } from '../utils/variables';
 
 function generateId(): string {
@@ -68,8 +68,6 @@ interface ClientContextType {
 
 export const ClientContext = createContext<ClientContextType | null>(null);
 
-const STORE_KEY = 'requests';
-
 // Serialized format for storing in IndexedDB
 interface SerializedRequest extends Omit<Request, 'httpResponse'> {
   httpResponse: {
@@ -106,46 +104,49 @@ function base64ToBlob(base64: string, type: string): Blob {
   return new Blob([bytes], { type });
 }
 
-async function serializeHistory(history: Request[]): Promise<SerializedRequest[]> {
-  return Promise.all(history.map(async req => {
-    // Handle body serialization
-    let body = req.body;
-    if (req.body.type === 'form-data') {
-      body = {
-        ...req.body,
-        data: req.body.data.map(f => ({ ...f, file: null })),
-      };
-    } else if (req.body.type === 'binary') {
-      body = { ...req.body, file: null };
-    }
-
-    // Handle response body serialization (Blob -> base64)
-    let httpResponse: SerializedRequest['httpResponse'] = null;
-    if (req.httpResponse) {
-      const content = req.httpResponse.body instanceof Blob
-        ? await blobToBase64(req.httpResponse.body)
-        : '';
-      const contentType = req.httpResponse.body instanceof Blob
-        ? req.httpResponse.body.type
-        : 'application/octet-stream';
-      
-      httpResponse = {
-        status: req.httpResponse.status,
-        statusCode: req.httpResponse.statusCode,
-        headers: req.httpResponse.headers,
-        content,
-        contentType,
-        duration: req.httpResponse.duration,
-        error: req.httpResponse.error,
-      };
-    }
-
-    return {
-      ...req,
-      body,
-      httpResponse,
+async function serializeRequest(req: Request): Promise<SerializedRequest> {
+  // Handle body serialization
+  let body = req.body;
+  if (req.body.type === 'form-data') {
+    body = {
+      ...req.body,
+      data: req.body.data.map(f => ({ ...f, file: null })),
     };
-  }));
+  } else if (req.body.type === 'binary') {
+    body = { ...req.body, file: null };
+  }
+
+  // Handle response body serialization (Blob -> base64)
+  let httpResponse: SerializedRequest['httpResponse'] = null;
+  if (req.httpResponse) {
+    const content = req.httpResponse.body instanceof Blob
+      ? await blobToBase64(req.httpResponse.body)
+      : '';
+    const contentType = req.httpResponse.body instanceof Blob
+      ? req.httpResponse.body.type
+      : 'application/octet-stream';
+    
+    httpResponse = {
+      status: req.httpResponse.status,
+      statusCode: req.httpResponse.statusCode,
+      headers: req.httpResponse.headers,
+      content,
+      contentType,
+      duration: req.httpResponse.duration,
+      error: req.httpResponse.error,
+    };
+  }
+
+  return {
+    ...req,
+    body,
+    httpResponse,
+  };
+}
+
+async function saveRequest(req: Request): Promise<void> {
+  const serialized = await serializeRequest(req);
+  await setValue(req.id, serialized);
 }
 
 function deserializeHistory(serialized: SerializedRequest[]): Request[] {
@@ -184,27 +185,28 @@ const initialState: ClientState = {
 
 export function ClientProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ClientState>(initialState);
-  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load history from IndexedDB on mount
+  // Load history from storage on mount
   useEffect(() => {
-    getValue<SerializedRequest[]>(STORE_KEY).then(serialized => {
-      if (serialized) {
-        const history = deserializeHistory(serialized);
+    async function loadHistory() {
+      try {
+        const entries = await listEntries();
+        const requests = await Promise.all(
+          entries.map(async (entry) => {
+            const serialized = await getValue<SerializedRequest>(entry.id);
+            return serialized ? deserializeHistory([serialized])[0] : null;
+          })
+        );
+        const history = requests
+          .filter((r): r is Request => r !== null)
+          .sort((a, b) => (b.executionTime ?? b.creationTime) - (a.executionTime ?? a.creationTime));
         setState(prev => ({ ...prev, history }));
+      } catch (error) {
+        console.error('Failed to load history:', error);
       }
-      setIsLoaded(true);
-    });
-  }, []);
-
-  // Persist history to IndexedDB
-  useEffect(() => {
-    if (isLoaded) {
-      serializeHistory(state.history).then(serialized => {
-        setValue(STORE_KEY, serialized);
-      });
     }
-  }, [state.history, isLoaded]);
+    loadHistory();
+  }, []);
 
   // Helper to update request
   const updateRequest = useCallback((updates: Partial<Request>) => {
@@ -343,6 +345,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           httpResponse: clientResponse,
           executing: false,
         };
+
+        // Save to filesystem
+        saveRequest(updatedRequest);
 
         setState(prev => {
           const existingIndex = prev.history.findIndex(h => h.id === req.id);
@@ -514,6 +519,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         executing: false,
       };
       
+      // Save to filesystem
+      saveRequest(updatedRequest);
+
       // Update history - find existing entry by id and update, or add new
       setState(prev => {
         const existingIndex = prev.history.findIndex(h => h.id === req.id);
@@ -561,6 +569,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         executing: false,
       };
       
+      // Save to filesystem
+      saveRequest(updatedRequest);
+
       // Update history with failed request too
       setState(prev => {
         const existingIndex = prev.history.findIndex(h => h.id === req.id);
@@ -632,11 +643,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const clearHistory = useCallback(() => {
+  const clearHistory = useCallback(async () => {
+    const entries = await listEntries();
+    await Promise.all(entries.map(entry => deleteValue(entry.id)));
     setState(prev => ({ ...prev, history: [] }));
   }, []);
 
-  const deleteHistoryEntry = useCallback((id: string) => {
+  const deleteHistoryEntry = useCallback(async (id: string) => {
+    await deleteValue(id);
     setState(prev => ({
       ...prev,
       history: prev.history.filter(h => h.id !== id),
