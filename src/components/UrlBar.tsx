@@ -16,18 +16,64 @@ interface GrpcReflectResponse {
   services: ServiceReflection[];
 }
 
+function AutoWidthInput({
+  value,
+  onChange,
+  placeholder,
+  minWidth = 60,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  minWidth?: number;
+}) {
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState(minWidth);
+
+  useEffect(() => {
+    if (measureRef.current) {
+      const textWidth = measureRef.current.offsetWidth;
+      setWidth(Math.max(minWidth, textWidth + 24)); // +24 for padding
+    }
+  }, [value, placeholder, minWidth]);
+
+  const displayText = value || placeholder;
+
+  return (
+    <div className="relative">
+      <span
+        ref={measureRef}
+        className="absolute invisible whitespace-pre text-sm"
+        aria-hidden="true"
+      >
+        {displayText}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: `${width}px` }}
+        className="px-2 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
+      />
+    </div>
+  );
+}
+
 function GrpcCombobox({
   value,
   onChange,
   placeholder,
   fetchOptions,
   disabled,
+  minWidth = 60,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   fetchOptions: () => Promise<string[]>;
   disabled?: boolean;
+  minWidth?: number;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [options, setOptions] = useState<string[]>([]);
@@ -35,6 +81,17 @@ function GrpcCombobox({
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState(minWidth);
+
+  useEffect(() => {
+    if (measureRef.current) {
+      const textWidth = measureRef.current.offsetWidth;
+      setWidth(Math.max(minWidth, textWidth + 40)); // +40 for padding and chevron
+    }
+  }, [value, placeholder, minWidth]);
+
+  const displayText = value || placeholder;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -68,7 +125,14 @@ function GrpcCombobox({
   );
 
   return (
-    <div ref={containerRef} className="relative flex-1 min-w-0">
+    <div ref={containerRef} className="relative" style={{ width: `${width}px` }}>
+      <span
+        ref={measureRef}
+        className="absolute invisible whitespace-pre text-sm"
+        aria-hidden="true"
+      >
+        {displayText}
+      </span>
       <div className="flex items-center">
         <input
           ref={inputRef}
@@ -95,7 +159,7 @@ function GrpcCombobox({
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-[#1a1a1a] border border-neutral-200 dark:border-white/10 rounded-md shadow-lg z-50 max-h-48 overflow-y-auto">
+        <div className="absolute top-full left-0 mt-1 bg-white dark:bg-[#1a1a1a] border border-neutral-200 dark:border-white/10 rounded-md shadow-lg z-50 max-h-48 overflow-y-auto min-w-full">
           {loading && (
             <div className="px-3 py-2 text-xs text-neutral-500">Loading...</div>
           )}
@@ -115,7 +179,7 @@ function GrpcCombobox({
                 onChange(opt);
                 setIsOpen(false);
               }}
-              className="w-full px-3 py-1.5 text-left text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/10 transition-colors"
+              className="w-full px-3 py-1.5 text-left text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/10 transition-colors whitespace-nowrap"
             >
               {opt}
             </button>
@@ -130,9 +194,6 @@ export function UrlBar() {
   const {
     request,
     setUrl,
-    setGrpcHost,
-    setGrpcService,
-    setGrpcMethod,
     executeRequest,
     sidebarCollapsed,
     toggleSidebar,
@@ -146,10 +207,30 @@ export function UrlBar() {
 
   const protocol = request?.protocol ?? 'rest';
   const url = request?.url ?? '';
-  const grpcHost = request?.grpcHost ?? '';
-  const grpcService = request?.grpcService ?? '';
-  const grpcMethod = request?.grpcMethod ?? '';
   const isLoading = request?.executing ?? false;
+
+  // Parse grpc:// URL into parts
+  const parseGrpcUrl = (grpcUrl: string): { host: string; service: string; method: string } => {
+    const match = grpcUrl.match(/^grpc:\/\/([^/]*)(?:\/([^/]*)(?:\/([^/]*))?)?$/);
+    if (match) {
+      return { host: match[1] || '', service: match[2] || '', method: match[3] || '' };
+    }
+    return { host: '', service: '', method: '' };
+  };
+
+  // Build grpc:// URL from parts
+  const buildGrpcUrl = (host: string, service: string, method: string): string => {
+    if (!host) return 'grpc://';
+    if (!service) return `grpc://${host}`;
+    if (!method) return `grpc://${host}/${service}`;
+    return `grpc://${host}/${service}/${method}`;
+  };
+
+  const { host: grpcHost, service: grpcService, method: grpcMethod } = parseGrpcUrl(url);
+
+  const setGrpcHost = (host: string) => setUrl(buildGrpcUrl(host, grpcService, grpcMethod));
+  const setGrpcService = (service: string) => setUrl(buildGrpcUrl(grpcHost, service, grpcMethod));
+  const setGrpcMethod = (method: string) => setUrl(buildGrpcUrl(grpcHost, grpcService, method));
 
   // Check if we can execute
   const canExecute = protocol === 'rest'
@@ -201,12 +282,11 @@ export function UrlBar() {
       ) : (
         /* gRPC: host / service / method */
         <div className="flex-1 flex items-center gap-0 min-w-0">
-          <input
-            type="text"
+          <AutoWidthInput
             value={grpcHost}
-            onChange={(e) => setGrpcHost(e.target.value)}
+            onChange={setGrpcHost}
             placeholder="host:port"
-            className="w-32 shrink-0 px-2 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
+            minWidth={160}
           />
           <span className="text-neutral-300 dark:text-neutral-600 px-1">/</span>
           <GrpcCombobox
@@ -215,6 +295,7 @@ export function UrlBar() {
             placeholder="service"
             fetchOptions={fetchServices}
             disabled={!grpcHost}
+            minWidth={60}
           />
           <span className="text-neutral-300 dark:text-neutral-600 px-1">/</span>
           <GrpcCombobox
@@ -223,6 +304,7 @@ export function UrlBar() {
             placeholder="method"
             fetchOptions={fetchMethods}
             disabled={!grpcHost || !grpcService}
+            minWidth={60}
           />
         </div>
       )}

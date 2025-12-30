@@ -33,11 +33,6 @@ function getStatusColor(statusCode: number | null): string {
 }
 
 function getHostname(entry: Request): string {
-  if (entry.protocol === 'grpc') {
-    // For gRPC, use the host (without port if present)
-    const host = entry.grpcHost || '';
-    return host.split(':')[0] || 'grpc';
-  }
   try {
     return new URL(entry.url).hostname;
   } catch {
@@ -46,10 +41,6 @@ function getHostname(entry: Request): string {
 }
 
 function getDisplayPath(entry: Request): string {
-  if (entry.protocol === 'grpc') {
-    // For gRPC, show service/method
-    return `${entry.grpcService}/${entry.grpcMethod}`;
-  }
   try {
     const url = new URL(entry.url);
     return url.pathname + url.search;
@@ -159,7 +150,7 @@ export function Sidebar() {
                       <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>
                         {getDisplayMethod(entry)}
                       </span>
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.protocol === 'grpc' ? `${entry.grpcService}/${entry.grpcMethod}` : entry.url}>
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.url}>
                         {getDisplayPath(entry)}
                       </span>
                       <div className="flex items-center justify-end text-[10px] text-neutral-400 dark:text-neutral-600 shrink-0 w-12 h-5">

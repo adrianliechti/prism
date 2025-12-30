@@ -50,10 +50,6 @@ export interface Request {
   protocol: Protocol;
   method: HttpMethod;
   url: string;
-  // gRPC-specific fields
-  grpcHost: string;
-  grpcService: string;
-  grpcMethod: string;
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;

@@ -20,9 +20,6 @@ function createNewRequest(name?: string): Request {
     protocol: 'rest',
     method: 'GET',
     url: '',
-    grpcHost: '',
-    grpcService: '',
-    grpcMethod: '',
     headers: [createEmptyKeyValue()],
     query: [createEmptyKeyValue()],
     body: { type: 'none' },
@@ -51,9 +48,6 @@ interface ClientContextType {
   setProtocol: (protocol: Protocol) => void;
   setMethod: (method: HttpMethod) => void;
   setUrl: (url: string) => void;
-  setGrpcHost: (host: string) => void;
-  setGrpcService: (service: string) => void;
-  setGrpcMethod: (method: string) => void;
   setHeaders: (headers: KeyValuePair[]) => void;
   setQuery: (params: KeyValuePair[]) => void;
   setBody: (body: RequestBody) => void;
@@ -176,9 +170,6 @@ function deserializeHistory(serialized: SerializedRequest[]): Request[] {
     return {
       ...req,
       protocol: req.protocol ?? 'rest',
-      grpcHost: req.grpcHost ?? '',
-      grpcService: req.grpcService ?? '',
-      grpcMethod: req.grpcMethod ?? '',
       variables: req.variables ?? [],
       httpResponse,
     };
@@ -236,18 +227,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     updateRequest({ url });
   }, [updateRequest]);
 
-  const setGrpcHost = useCallback((grpcHost: string) => {
-    updateRequest({ grpcHost });
-  }, [updateRequest]);
-
-  const setGrpcService = useCallback((grpcService: string) => {
-    updateRequest({ grpcService });
-  }, [updateRequest]);
-
-  const setGrpcMethod = useCallback((grpcMethod: string) => {
-    updateRequest({ grpcMethod });
-  }, [updateRequest]);
-
   const setHeaders = useCallback((headers: KeyValuePair[]) => {
     updateRequest({ headers });
   }, [updateRequest]);
@@ -298,6 +277,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
       // gRPC mode
       if (req.protocol === 'grpc') {
+        // Parse grpc://host/service/method URL
+        const grpcUrl = req.url;
+        const match = grpcUrl.match(/^grpc:\/\/([^/]+)\/(.+)\/([^/]+)$/);
+        if (!match) {
+          throw new Error('Invalid gRPC URL format. Expected: grpc://host:port/service/method');
+        }
+        const [, grpcHost, grpcService, grpcMethod] = match;
+
         // gRPC always uses JSON body
         let body = '';
         let bodyForHistory = '';
@@ -315,11 +302,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
 
         // Build gRPC proxy URL: /proxy/grpc/{host}/{service}/{method}
-        const proxyUrl = `/proxy/grpc/${req.grpcHost}/${req.grpcService}/${req.grpcMethod}`;
+        const proxyUrl = `/proxy/grpc/${grpcHost}/${grpcService}/${grpcMethod}`;
 
         const clientRequest = {
           method: 'POST' as const,
-          url: `grpc://${req.grpcHost}/${req.grpcService}/${req.grpcMethod}`,
+          url: grpcUrl,
           headers: headersObj,
           query: {},
           body: bodyForHistory,
@@ -677,9 +664,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setProtocol,
     setMethod,
     setUrl,
-    setGrpcHost,
-    setGrpcService,
-    setGrpcMethod,
     setHeaders,
     setQuery,
     setBody,
