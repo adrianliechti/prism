@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useClient } from '../context/useClient';
 import { KeyValueEditor } from './KeyValueEditor';
 import { FormDataEditor } from './FormDataEditor';
@@ -84,10 +84,18 @@ export function RequestTabs() {
     setVariables,
   } = useClient();
 
+  const protocol = request?.protocol ?? 'rest';
   const headers = request?.headers ?? [];
   const query = request?.query ?? [];
   const body = request?.body ?? { type: 'none' as const };
   const variables = request?.variables ?? [];
+
+  // In gRPC mode, force JSON body type
+  useEffect(() => {
+    if (protocol === 'grpc' && body.type !== 'json') {
+      setBody({ type: 'json', content: '' });
+    }
+  }, [protocol, body.type, setBody]);
 
   const handleBodyTypeChange = (type: BodyType) => {
     switch (type) {
@@ -112,11 +120,29 @@ export function RequestTabs() {
     }
   };
 
-  const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: 'params', label: 'Params', count: query.filter(p => p.key).length },
-    { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
-    { id: 'body', label: 'Body' },
-  ];
+  const tabs: { id: Tab; label: string; count?: number }[] = protocol === 'grpc'
+    ? [
+        { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
+        { id: 'body', label: 'Body' },
+      ]
+    : [
+        { id: 'params', label: 'Params', count: query.filter(p => p.key).length },
+        { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
+        { id: 'body', label: 'Body' },
+      ];
+
+  // gRPC only supports JSON body (no selector needed)
+  const availableBodyTypes = protocol === 'grpc'
+    ? bodyTypes.filter(t => t.value === 'json')
+    : bodyTypes;
+
+  // Compute effective tab - if params tab selected but we're in gRPC mode, show body instead
+  const effectiveTabId = useMemo(() => {
+    if (protocol === 'grpc' && activeTabId === 'params') {
+      return 'body';
+    }
+    return activeTabId;
+  }, [protocol, activeTabId]);
 
   return (
     <div className="space-y-3">
@@ -129,7 +155,7 @@ export function RequestTabs() {
               role="tab"
               onClick={() => setActiveTabId(tab.id)}
               className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
-                activeTabId === tab.id
+                effectiveTabId === tab.id
                   ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
                   : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
               }`}
@@ -143,13 +169,13 @@ export function RequestTabs() {
             </button>
           ))}
         </div>
-        {activeTabId === 'body' && (
+        {effectiveTabId === 'body' && availableBodyTypes.length > 1 && (
           <select
             value={body.type}
             onChange={(e) => handleBodyTypeChange(e.target.value as BodyType)}
             className="h-6 px-2 text-[11px] font-medium bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 rounded-md shadow-sm border-0 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-white/20 cursor-pointer transition-all min-w-30"
           >
-            {bodyTypes.map((type) => (
+            {availableBodyTypes.map((type) => (
               <option key={type.value} value={type.value} className="bg-white dark:bg-[#1a1a1a]">
                 {type.label}
               </option>
@@ -160,7 +186,7 @@ export function RequestTabs() {
 
       {/* Tab Content */}
       <div>
-        {activeTabId === 'params' && (
+        {effectiveTabId === 'params' && (
           <KeyValueEditor
             items={query}
             onChange={setQuery}
@@ -169,7 +195,7 @@ export function RequestTabs() {
           />
         )}
 
-        {activeTabId === 'headers' && (
+        {effectiveTabId === 'headers' && (
           <KeyValueEditor
             items={headers}
             onChange={setHeaders}
@@ -179,7 +205,7 @@ export function RequestTabs() {
           />
         )}
 
-        {activeTabId === 'body' && body.type !== 'none' && (
+        {effectiveTabId === 'body' && body.type !== 'none' && (
           <>
             {body.type === 'json' && (
               <JsonEditor

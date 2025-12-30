@@ -2,6 +2,8 @@ import type { ClientRequest, ClientResponse } from './client';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
+export type Protocol = 'rest' | 'grpc';
+
 // Variable types for dynamic content in JSON bodies
 export type VariableType = 'file_base64' | 'file_dataurl' | 'base64' | 'timestamp' | 'uuid' | 'random_string';
 
@@ -45,6 +47,7 @@ export interface FormDataField {
 export interface Request {
   id: string;
   name: string;
+  protocol: Protocol;
   method: HttpMethod;
   url: string;
   query: KeyValuePair[];
