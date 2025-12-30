@@ -187,7 +187,7 @@ export function RequestTabs() {
                 onChange={(content) => setBody({ ...body, content })}
                 variables={variables}
                 onVariablesChange={setVariables}
-                placeholder='{\n  "key": "value"\n}'
+                placeholder={'{\n  "key": "value"\n}'}
               />
             )}
 

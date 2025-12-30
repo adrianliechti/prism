@@ -8,6 +8,7 @@ interface JsonEditorProps {
   onChange: (value: string) => void;
   variables: Variable[];
   onVariablesChange: (variables: Variable[]) => void;
+  placeholder?: string;
 }
 
 interface VariableTypeOption {
@@ -136,7 +137,7 @@ function getTextBeforeCursor(editor: HTMLElement, selection: Selection): string 
   return result;
 }
 
-export function JsonEditor({ value, onChange, variables, onVariablesChange }: JsonEditorProps) {
+export function JsonEditor({ value, onChange, variables, onVariablesChange, placeholder }: JsonEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -741,16 +742,23 @@ export function JsonEditor({ value, onChange, variables, onVariablesChange }: Js
           {resolvedJson}
         </pre>
       ) : (
-        <div
-          ref={editorRef}
-          contentEditable
-          suppressContentEditableWarning
-          onInput={handleInput}
-          onPaste={handlePaste}
-          onKeyDown={handleKeyDown}
-          onClick={handleClick}
-          className="flex-1 min-h-0 p-3 font-mono text-sm text-zinc-100 outline-none overflow-y-auto whitespace-pre-wrap wrap-break-word"
-        />
+        <div className="flex-1 min-h-0 relative">
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={handleInput}
+            onPaste={handlePaste}
+            onKeyDown={handleKeyDown}
+            onClick={handleClick}
+            className="h-full p-3 font-mono text-sm text-zinc-100 outline-none overflow-y-auto whitespace-pre-wrap wrap-break-word"
+          />
+          {!value && placeholder && (
+            <div className="absolute top-3 left-3 font-mono text-sm text-zinc-500 pointer-events-none whitespace-pre-wrap">
+              {placeholder}
+            </div>
+          )}
+        </div>
       )}
       
       {/* Status bar */}
