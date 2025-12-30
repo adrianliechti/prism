@@ -3,6 +3,7 @@ import { Send, X, Loader2, Trash2, Sparkles } from 'lucide-react';
 import { chat, type RequestSetters } from '../api/requestChat';
 import type { Message as APIMessage } from '../api/openai';
 import type { Request } from '../types/types';
+import { Markdown } from './Markdown';
 
 interface Message {
   id: string;
@@ -183,7 +184,11 @@ export function AiPanel({ onClose, request, setters }: AiPanelProps) {
           >
             <div className={message.role === 'user' ? 'text-neutral-900 dark:text-neutral-100' : 'text-neutral-700 dark:text-neutral-300'}>
               {message.content ? (
-                <span className="whitespace-pre-wrap">{message.content}</span>
+                message.role === 'assistant' ? (
+                  <Markdown>{message.content}</Markdown>
+                ) : (
+                  <span className="whitespace-pre-wrap">{message.content}</span>
+                )
               ) : (
                 message.isStreaming && (
                   <span className="flex items-center gap-2 text-neutral-400">

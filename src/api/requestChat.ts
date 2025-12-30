@@ -10,6 +10,15 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
+function formatJson(str: string): string {
+  try {
+    const parsed = JSON.parse(str);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return str;
+  }
+}
+
 // Tools for building HTTP requests
 export const requestTools: Tool[] = [
   {
@@ -291,7 +300,7 @@ export function executeTool(
           body = { type: 'none' };
           break;
         case 'json':
-          body = { type: 'json', content: args.content || '' };
+          body = { type: 'json', content: formatJson(args.content || '') };
           break;
         case 'raw':
           body = { type: 'raw', content: args.content || '' };
@@ -351,6 +360,7 @@ Guidelines:
 - Be concise but helpful in your explanations
 - If the user's request is ambiguous, ask for clarification
 - When setting headers or params, preserve existing ones unless the user asks to replace them
+- Format your responses using Markdown: use **bold**, \`code\`, code blocks with language tags, lists, and headers when appropriate
 
 The user is working with an HTTP client similar to Postman or Insomnia.`;
 
