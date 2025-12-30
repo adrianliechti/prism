@@ -601,9 +601,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     newReq.protocol = entry.protocol ?? 'rest';
     newReq.method = entry.method;
     newReq.url = entry.url;
-    newReq.grpcHost = entry.grpcHost ?? '';
-    newReq.grpcService = entry.grpcService ?? '';
-    newReq.grpcMethod = entry.grpcMethod ?? '';
     newReq.headers = entry.headers.map(h => ({ ...h, id: generateId() }));
     newReq.query = entry.query.map(p => ({ ...p, id: generateId() }));
     // Clone variables with new IDs
