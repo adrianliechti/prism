@@ -1,8 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import type { KeyValuePair, HttpMethod, Request, RequestBody } from '../types/types';
+import type { KeyValuePair, HttpMethod, Request, RequestBody, Variable } from '../types/types';
 import type { ClientRequest } from '../types/client';
 import { getValue, setValue } from '../lib/db';
+import { resolveVariables } from '../utils/variables';
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
@@ -21,6 +22,7 @@ function createNewRequest(name?: string): Request {
     headers: [createEmptyKeyValue()],
     query: [createEmptyKeyValue()],
     body: { type: 'none' },
+    variables: [],
     creationTime: Date.now(),
     executionTime: null,
     httpRequest: null,
@@ -47,6 +49,7 @@ interface ClientContextType {
   setHeaders: (headers: KeyValuePair[]) => void;
   setQuery: (params: KeyValuePair[]) => void;
   setBody: (body: RequestBody) => void;
+  setVariables: (variables: Variable[]) => void;
   setOptions: (options: Partial<ClientRequest['options']>) => void;
   executeRequest: () => Promise<void>;
   clearResponse: () => void;
@@ -164,6 +167,7 @@ function deserializeHistory(serialized: SerializedRequest[]): Request[] {
 
     return {
       ...req,
+      variables: req.variables ?? [],
       httpResponse,
     };
   });
@@ -228,6 +232,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     updateRequest({ body });
   }, [updateRequest]);
 
+  const setVariables = useCallback((variables: Variable[]) => {
+    updateRequest({ variables });
+  }, [updateRequest]);
+
   const setOptions = useCallback((options: Partial<ClientRequest['options']>) => {
     setState(prev => {
       const currentOptions = prev.request.httpRequest?.options ?? { insecure: false, redirect: true };
@@ -272,13 +280,17 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       let useFormData = false;
       
       switch (req.body.type) {
-        case 'json':
-          body = req.body.content;
-          bodyForHistory = req.body.content;
+        case 'json': {
+          // Resolve variables in JSON content
+          const resolvedContent = resolveVariables(req.body.content, req.variables);
+          
+          body = resolvedContent;
+          bodyForHistory = req.body.content; // Store original with markers
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'application/json';
           }
           break;
+        }
         case 'form-urlencoded': {
           const formParams = new URLSearchParams();
           req.body.data.filter(f => f.enabled && f.key).forEach(f => {
@@ -482,6 +494,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     newReq.url = entry.url;
     newReq.headers = entry.headers.map(h => ({ ...h, id: generateId() }));
     newReq.query = entry.query.map(p => ({ ...p, id: generateId() }));
+    // Clone variables with new IDs
+    newReq.variables = (entry.variables ?? []).map(v => ({ ...v, id: generateId() }));
     // Clone body with new IDs for form data
     if (entry.body.type === 'form-urlencoded') {
       newReq.body = {
@@ -546,6 +560,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setHeaders,
     setQuery,
     setBody,
+    setVariables,
     setOptions,
     executeRequest,
     clearResponse,

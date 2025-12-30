@@ -4,6 +4,7 @@ import { KeyValueEditor } from './KeyValueEditor';
 import { FormDataEditor } from './FormDataEditor';
 import { BinaryUploader } from './BinaryUploader';
 import { CodeEditor } from './CodeEditor';
+import { JsonEditor } from './JsonEditor';
 import type { RequestBody, FormDataField } from '../types/types';
 
 type Tab = 'headers' | 'params' | 'body';
@@ -80,11 +81,13 @@ export function RequestTabs() {
     setHeaders,
     setQuery,
     setBody,
+    setVariables,
   } = useClient();
 
   const headers = request?.headers ?? [];
   const query = request?.query ?? [];
   const body = request?.body ?? { type: 'none' as const };
+  const variables = request?.variables ?? [];
 
   const handleBodyTypeChange = (type: BodyType) => {
     switch (type) {
@@ -178,12 +181,22 @@ export function RequestTabs() {
 
         {activeTabId === 'body' && body.type !== 'none' && (
           <>
-            {(body.type === 'json' || body.type === 'raw') && (
+            {body.type === 'json' && (
+              <JsonEditor
+                value={body.content}
+                onChange={(content) => setBody({ ...body, content })}
+                variables={variables}
+                onVariablesChange={setVariables}
+                placeholder='{\n  "key": "value"\n}'
+              />
+            )}
+
+            {body.type === 'raw' && (
               <CodeEditor
                 value={body.content}
                 onChange={(content) => setBody({ ...body, content })}
-                language={body.type === 'json' ? 'json' : 'text'}
-                placeholder={body.type === 'json' ? '{\n  "key": "value"\n}' : 'Enter raw body content'}
+                language="text"
+                placeholder="Enter raw body content"
               />
             )}
 
