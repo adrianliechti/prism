@@ -25,6 +25,7 @@ func New(cfg *config.Config) (*Server, error) {
 		Handler: mux,
 	}
 
+	mux.HandleFunc("/proxy/grpc/{host}/{path...}", s.handleGRPC)
 	mux.HandleFunc("/proxy/{scheme}/{host}/{path...}", s.handleProxy)
 
 	if cfg.OpenAI != nil {
