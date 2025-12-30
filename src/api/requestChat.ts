@@ -2,6 +2,7 @@
 import type { Tool, ToolCall, ToolResult, Message } from './openai';
 import { Role, complete } from './openai';
 import type { Request, HttpMethod, KeyValuePair, RequestBody, FormDataField } from '../types/types';
+import { getConfig } from '../config';
 
 const MAX_BODY_SIZE = 10 * 1024; // 10KB
 
@@ -368,7 +369,7 @@ The user is working with an HTTP client similar to Postman or Insomnia.`;
     attempts++;
 
     const response = await complete(
-      '', // Empty string - server sets default model
+      getConfig().ai?.model || '',
       instructions,
       currentHistory,
       requestTools,

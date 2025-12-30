@@ -1,9 +1,11 @@
 import { useClient } from '../context/useClient';
 import { MethodSelector } from './MethodSelector';
 import { PanelRightClose, Sparkles } from 'lucide-react';
+import { getConfig } from '../config';
 
 export function UrlBar() {
   const { request, setUrl, executeRequest, sidebarCollapsed, toggleSidebar, history, aiPanelOpen, toggleAiPanel } = useClient();
+  const hasAiModel = Boolean(getConfig().ai?.model);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,18 +52,20 @@ export function UrlBar() {
           </svg>
         )}
       </button>
-      <button
-        type="button"
-        onClick={toggleAiPanel}
-        className={`p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors ${
-          aiPanelOpen 
-            ? 'text-amber-500 hover:text-amber-600' 
-            : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
-        }`}
-        title="AI Assistant"
-      >
-        <Sparkles className="w-4 h-4" />
-      </button>
+      {hasAiModel && (
+        <button
+          type="button"
+          onClick={toggleAiPanel}
+          className={`p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors ${
+            aiPanelOpen 
+              ? 'text-amber-500 hover:text-amber-600' 
+              : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
+          }`}
+          title="AI Assistant"
+        >
+          <Sparkles className="w-4 h-4" />
+        </button>
+      )}
     </form>
   );
 }

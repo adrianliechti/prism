@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { RequestPanel } from './components/RequestPanel';
 import { AiPanel } from './components/AiPanel';
 import { getStatusBadge, formatBytes } from './utils/format';
+import { getConfig } from './config';
 
 function StatusBar() {
   const { request } = useClient();
@@ -51,7 +52,7 @@ function AppContent() {
       </div>
 
       {/* AI Panel - Inline */}
-      {aiPanelOpen && (
+      {aiPanelOpen && getConfig().ai?.model && (
         <AiPanel
           onClose={toggleAiPanel}
           request={request}
