@@ -32,12 +32,44 @@ function getStatusColor(statusCode: number | null): string {
   return 'bg-red-500';
 }
 
-function getHostname(url: string): string {
+function getHostname(entry: Request): string {
+  if (entry.protocol === 'grpc') {
+    // For gRPC, use the host (without port if present)
+    const host = entry.grpcHost || '';
+    return host.split(':')[0] || 'grpc';
+  }
   try {
-    return new URL(url).hostname;
+    return new URL(entry.url).hostname;
   } catch {
     return 'Other';
   }
+}
+
+function getDisplayPath(entry: Request): string {
+  if (entry.protocol === 'grpc') {
+    // For gRPC, show service/method
+    return `${entry.grpcService}/${entry.grpcMethod}`;
+  }
+  try {
+    const url = new URL(entry.url);
+    return url.pathname + url.search;
+  } catch {
+    return entry.url;
+  }
+}
+
+function getDisplayMethod(entry: Request): string {
+  if (entry.protocol === 'grpc') {
+    return 'gRPC';
+  }
+  return entry.method;
+}
+
+function getMethodColor(entry: Request): string {
+  if (entry.protocol === 'grpc') {
+    return 'text-cyan-600 dark:text-cyan-400';
+  }
+  return methodColors[entry.method];
 }
 
 interface HostGroup {
@@ -50,7 +82,7 @@ function groupByHostname(history: Request[]): HostGroup[] {
   const groups = new Map<string, Request[]>();
   
   for (const entry of history) {
-    const hostname = getHostname(entry.url);
+    const hostname = getHostname(entry);
     const existing = groups.get(hostname) || [];
     existing.push(entry);
     groups.set(hostname, existing);
@@ -124,18 +156,11 @@ export function Sidebar() {
                       <span
                         className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entry.httpResponse?.statusCode ?? null)}`}
                       />
-                      <span className={`text-[10px] font-semibold shrink-0 ${methodColors[entry.method]}`}>
-                        {entry.method}
+                      <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>
+                        {getDisplayMethod(entry)}
                       </span>
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.url}>
-                        {(() => {
-                          try {
-                            const url = new URL(entry.url);
-                            return url.pathname + url.search;
-                          } catch {
-                            return entry.url;
-                          }
-                        })()}
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.protocol === 'grpc' ? `${entry.grpcService}/${entry.grpcMethod}` : entry.url}>
+                        {getDisplayPath(entry)}
                       </span>
                       <div className="flex items-center justify-end text-[10px] text-neutral-400 dark:text-neutral-600 shrink-0 w-12 h-5">
                         <span className="group-hover:hidden">

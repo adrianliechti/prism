@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import type { KeyValuePair, HttpMethod, Request, RequestBody, Variable } from '../types/types';
+import type { KeyValuePair, HttpMethod, Protocol, Request, RequestBody, Variable } from '../types/types';
 import type { ClientRequest } from '../types/client';
 import { getValue, setValue } from '../lib/db';
 import { resolveVariables } from '../utils/variables';
@@ -17,8 +17,12 @@ function createNewRequest(name?: string): Request {
   return {
     id: generateId(),
     name: name || 'New Request',
+    protocol: 'rest',
     method: 'GET',
     url: '',
+    grpcHost: '',
+    grpcService: '',
+    grpcMethod: '',
     headers: [createEmptyKeyValue()],
     query: [createEmptyKeyValue()],
     body: { type: 'none' },
@@ -44,8 +48,12 @@ interface ClientContextType {
   sidebarCollapsed: boolean;
   
   // Request actions
+  setProtocol: (protocol: Protocol) => void;
   setMethod: (method: HttpMethod) => void;
   setUrl: (url: string) => void;
+  setGrpcHost: (host: string) => void;
+  setGrpcService: (service: string) => void;
+  setGrpcMethod: (method: string) => void;
   setHeaders: (headers: KeyValuePair[]) => void;
   setQuery: (params: KeyValuePair[]) => void;
   setBody: (body: RequestBody) => void;
@@ -167,6 +175,10 @@ function deserializeHistory(serialized: SerializedRequest[]): Request[] {
 
     return {
       ...req,
+      protocol: req.protocol ?? 'rest',
+      grpcHost: req.grpcHost ?? '',
+      grpcService: req.grpcService ?? '',
+      grpcMethod: req.grpcMethod ?? '',
       variables: req.variables ?? [],
       httpResponse,
     };
@@ -212,12 +224,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Request actions
+  const setProtocol = useCallback((protocol: Protocol) => {
+    updateRequest({ protocol });
+  }, [updateRequest]);
+
   const setMethod = useCallback((method: HttpMethod) => {
     updateRequest({ method });
   }, [updateRequest]);
 
   const setUrl = useCallback((url: string) => {
     updateRequest({ url });
+  }, [updateRequest]);
+
+  const setGrpcHost = useCallback((grpcHost: string) => {
+    updateRequest({ grpcHost });
+  }, [updateRequest]);
+
+  const setGrpcService = useCallback((grpcService: string) => {
+    updateRequest({ grpcService });
+  }, [updateRequest]);
+
+  const setGrpcMethod = useCallback((grpcMethod: string) => {
+    updateRequest({ grpcMethod });
   }, [updateRequest]);
 
   const setHeaders = useCallback((headers: KeyValuePair[]) => {
@@ -268,6 +296,93 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         headersObj[h.key] = h.value;
       });
 
+      // gRPC mode
+      if (req.protocol === 'grpc') {
+        // gRPC always uses JSON body
+        let body = '';
+        let bodyForHistory = '';
+        
+        if (req.body.type === 'json') {
+          body = resolveVariables(req.body.content, req.variables);
+          bodyForHistory = req.body.content;
+        } else {
+          body = '{}';
+          bodyForHistory = '{}';
+        }
+
+        if (!headersObj['Content-Type']) {
+          headersObj['Content-Type'] = 'application/json';
+        }
+
+        // Build gRPC proxy URL: /proxy/grpc/{host}/{service}/{method}
+        const proxyUrl = `/proxy/grpc/${req.grpcHost}/${req.grpcService}/${req.grpcMethod}`;
+
+        const clientRequest = {
+          method: 'POST' as const,
+          url: `grpc://${req.grpcHost}/${req.grpcService}/${req.grpcMethod}`,
+          headers: headersObj,
+          query: {},
+          body: bodyForHistory,
+          options: { insecure: false, redirect: false },
+        };
+
+        const startTime = performance.now();
+        const response = await fetch(proxyUrl, {
+          method: 'POST',
+          headers: headersObj,
+          body,
+        });
+        const duration = Math.round(performance.now() - startTime);
+
+        const responseBody = await response.blob();
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+
+        const clientResponse = {
+          status: response.statusText || String(response.status),
+          statusCode: response.status,
+          headers: responseHeaders,
+          body: responseBody,
+          duration,
+        };
+
+        const executionTime = Date.now();
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          httpRequest: clientRequest,
+          httpResponse: clientResponse,
+          executing: false,
+        };
+
+        setState(prev => {
+          const existingIndex = prev.history.findIndex(h => h.id === req.id);
+          let newHistory: Request[];
+
+          if (existingIndex >= 0) {
+            newHistory = [...prev.history];
+            newHistory[existingIndex] = updatedRequest;
+          } else {
+            newHistory = [updatedRequest, ...prev.history];
+          }
+
+          newHistory = newHistory
+            .sort((a, b) => (b.executionTime ?? 0) - (a.executionTime ?? 0))
+            .slice(0, 100);
+
+          return {
+            ...prev,
+            request: updatedRequest,
+            history: newHistory,
+          };
+        });
+
+        return;
+      }
+
+      // REST mode (existing logic)
       // Build query string
       const queryParams = new URLSearchParams();
       req.query.filter(p => p.enabled && p.key).forEach(p => {
@@ -490,8 +605,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     // Preserve the original entry's ID so re-executing updates the history entry
     newReq.id = entry.id;
     newReq.name = entry.name;
+    newReq.protocol = entry.protocol ?? 'rest';
     newReq.method = entry.method;
     newReq.url = entry.url;
+    newReq.grpcHost = entry.grpcHost ?? '';
+    newReq.grpcService = entry.grpcService ?? '';
+    newReq.grpcMethod = entry.grpcMethod ?? '';
     newReq.headers = entry.headers.map(h => ({ ...h, id: generateId() }));
     newReq.query = entry.query.map(p => ({ ...p, id: generateId() }));
     // Clone variables with new IDs
@@ -555,8 +674,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     request: state.request,
     history: state.history,
     sidebarCollapsed: state.sidebarCollapsed,
+    setProtocol,
     setMethod,
     setUrl,
+    setGrpcHost,
+    setGrpcService,
+    setGrpcMethod,
     setHeaders,
     setQuery,
     setBody,

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,11 @@ import (
 )
 
 func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.handleGRPCReflect(w, r)
+		return
+	}
+
 	_ = r.PathValue("scheme")
 	host := r.PathValue("host")
 	path := r.PathValue("path")
@@ -85,14 +91,77 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResp)
 }
 
+func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	conn, err := grpc.NewClient(host,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to connect to %s: %v", host, err), http.StatusBadGateway)
+		return
+	}
+
+	defer conn.Close()
+
+	services, err := reflectServices(ctx, conn)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to list services: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	response := &Reflection{
+		Services: []ServiceReflection{},
+	}
+
+	for _, svc := range services {
+		serviceName := string(svc.FullName())
+
+		// Filter out reflection service
+		if strings.HasPrefix(serviceName, "grpc.reflection.") {
+			continue
+		}
+
+		svcReflection := ServiceReflection{
+			Name:    serviceName,
+			Methods: []MethodReflection{},
+		}
+
+		methods := svc.Methods()
+
+		for j := 0; j < methods.Len(); j++ {
+			m := methods.Get(j)
+			svcReflection.Methods = append(svcReflection.Methods, MethodReflection{
+				Name: string(m.Name()),
+			})
+		}
+
+		response.Services = append(response.Services, svcReflection)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 func messageFromJSON(ctx context.Context, conn *grpc.ClientConn, service, method string, jsonBody []byte) (proto.Message, protoreflect.MethodDescriptor, error) {
-	services, err := reflectServices(ctx, conn, service)
+	services, err := reflectServices(ctx, conn)
 
 	if err != nil {
 		return nil, nil, err
 	}
 
-	desc, err := findMethod(services, service, method)
+	svc, err := findService(services, service)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	desc, err := findMethod(svc, method)
 
 	if err != nil {
 		return nil, nil, err
@@ -107,7 +176,7 @@ func messageFromJSON(ctx context.Context, conn *grpc.ClientConn, service, method
 	return msg, desc, nil
 }
 
-func reflectServices(ctx context.Context, conn *grpc.ClientConn, service string) (protoreflect.ServiceDescriptors, error) {
+func reflectServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect.ServiceDescriptor, error) {
 	client := grpc_reflection_v1alpha.NewServerReflectionClient(conn)
 
 	stream, err := client.ServerReflectionInfo(ctx)
@@ -117,8 +186,8 @@ func reflectServices(ctx context.Context, conn *grpc.ClientConn, service string)
 	}
 
 	if err = stream.Send(&grpc_reflection_v1alpha.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_FileContainingSymbol{
-			FileContainingSymbol: service,
+		MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_ListServices{
+			ListServices: "",
 		},
 	}); err != nil {
 		return nil, err
@@ -130,47 +199,77 @@ func reflectServices(ctx context.Context, conn *grpc.ClientConn, service string)
 		return nil, err
 	}
 
-	fdResp := resp.GetFileDescriptorResponse()
+	listResp := resp.GetListServicesResponse()
 
-	if fdResp == nil {
-		return nil, fmt.Errorf("no file descriptor response received")
+	if listResp == nil {
+		return nil, fmt.Errorf("no services response received")
 	}
 
-	fdProto := &descriptorpb.FileDescriptorProto{}
+	var allServices []protoreflect.ServiceDescriptor
 
-	if err := proto.Unmarshal(fdResp.FileDescriptorProto[0], fdProto); err != nil {
-		return nil, err
-	}
-
-	fd, err := protodesc.NewFile(fdProto, nil)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return fd.Services(), nil
-}
-
-func findMethod(services protoreflect.ServiceDescriptors, service, method string) (protoreflect.MethodDescriptor, error) {
-	for i := 0; i < services.Len(); i++ {
-		s := services.Get(i)
-
-		if string(s.FullName()) != service {
+	for _, svc := range listResp.Service {
+		if err = stream.Send(&grpc_reflection_v1alpha.ServerReflectionRequest{
+			MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_FileContainingSymbol{
+				FileContainingSymbol: svc.Name,
+			},
+		}); err != nil {
 			continue
 		}
 
-		methods := s.Methods()
+		fdResp, err := stream.Recv()
 
-		for j := 0; j < methods.Len(); j++ {
-			m := methods.Get(j)
-
-			if string(m.Name()) == method {
-				return m, nil
-			}
+		if err != nil {
+			continue
 		}
 
-		break
+		fdProtoResp := fdResp.GetFileDescriptorResponse()
+
+		if fdProtoResp == nil {
+			continue
+		}
+
+		fdProto := &descriptorpb.FileDescriptorProto{}
+
+		if err := proto.Unmarshal(fdProtoResp.FileDescriptorProto[0], fdProto); err != nil {
+			continue
+		}
+
+		fd, err := protodesc.NewFile(fdProto, nil)
+
+		if err != nil {
+			continue
+		}
+
+		services := fd.Services()
+
+		for i := 0; i < services.Len(); i++ {
+			allServices = append(allServices, services.Get(i))
+		}
 	}
 
-	return nil, fmt.Errorf("method %s/%s not found", service, method)
+	return allServices, nil
+}
+
+func findService(services []protoreflect.ServiceDescriptor, service string) (protoreflect.ServiceDescriptor, error) {
+	for _, s := range services {
+		if string(s.FullName()) == service {
+			return s, nil
+		}
+	}
+
+	return nil, fmt.Errorf("service %s not found", service)
+}
+
+func findMethod(service protoreflect.ServiceDescriptor, method string) (protoreflect.MethodDescriptor, error) {
+	methods := service.Methods()
+
+	for i := 0; i < methods.Len(); i++ {
+		m := methods.Get(i)
+
+		if string(m.Name()) == method {
+			return m, nil
+		}
+	}
+
+	return nil, fmt.Errorf("method %s/%s not found", service.FullName(), method)
 }
