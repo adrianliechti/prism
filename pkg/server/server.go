@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"prism"
 	"strings"
 
-	"prism/pkg/config"
+	"github.com/adrianliechti/prism"
+	"github.com/adrianliechti/prism/pkg/config"
 )
 
 type Server struct {
