@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"prism/pkg/config"
-	"prism/pkg/server"
+	"github.com/adrianliechti/prism/pkg/config"
+	"github.com/adrianliechti/prism/pkg/server"
 )
 
 func main() {
