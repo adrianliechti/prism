@@ -35,6 +35,7 @@ interface ClientState {
   request: Request;
   history: Request[];
   sidebarCollapsed: boolean;
+  aiPanelOpen: boolean;
 }
 
 interface ClientContextType {
@@ -62,6 +63,10 @@ interface ClientContextType {
   
   // Sidebar
   toggleSidebar: () => void;
+  
+  // AI Panel
+  aiPanelOpen: boolean;
+  toggleAiPanel: () => void;
 }
 
 export const ClientContext = createContext<ClientContextType | null>(null);
@@ -177,6 +182,7 @@ const initialState: ClientState = {
   request: createNewRequest(),
   history: [],
   sidebarCollapsed: false,
+  aiPanelOpen: false,
 };
 
 export function ClientProvider({ children }: { children: ReactNode }) {
@@ -544,6 +550,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, sidebarCollapsed: !prev.sidebarCollapsed }));
   }, []);
 
+  const toggleAiPanel = useCallback(() => {
+    setState(prev => ({ ...prev, aiPanelOpen: !prev.aiPanelOpen }));
+  }, []);
+
   const newRequest = useCallback(() => {
     setState(prev => ({
       ...prev,
@@ -555,6 +565,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     request: state.request,
     history: state.history,
     sidebarCollapsed: state.sidebarCollapsed,
+    aiPanelOpen: state.aiPanelOpen,
     setMethod,
     setUrl,
     setHeaders,
@@ -569,6 +580,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     clearHistory,
     deleteHistoryEntry,
     toggleSidebar,
+    toggleAiPanel,
   };
 
   return (
