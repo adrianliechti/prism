@@ -1,8 +1,17 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import type { KeyValuePair, HttpMethod, Protocol, Request, RequestBody, Variable } from '../types/types';
-import type { ClientRequest } from '../types/client';
-import { getValue, setValue, deleteValue, listEntries } from '../lib/data';
+import { createContext, useState, useCallback, type ReactNode } from 'react';
+import { useLiveQuery } from '@tanstack/react-db';
+import {
+  requestsCollection,
+  clearAllRequests,
+  type Request,
+  type KeyValuePair,
+  type HttpMethod,
+  type Protocol,
+  type RequestBody,
+  type Variable,
+  type ClientRequest,
+} from '../lib/data';
 import { resolveVariables } from '../utils/variables';
 
 function generateId(): string {
@@ -34,7 +43,6 @@ function createNewRequest(name?: string): Request {
 
 interface ClientState {
   request: Request;
-  history: Request[];
   sidebarCollapsed: boolean;
   aiPanelOpen: boolean;
 }
@@ -73,118 +81,8 @@ interface ClientContextType {
 
 export const ClientContext = createContext<ClientContextType | null>(null);
 
-// Serialized format for storing in IndexedDB
-interface SerializedRequest extends Omit<Request, 'httpResponse'> {
-  httpResponse: {
-    status: string;
-    statusCode: number;
-    headers: Record<string, string>;
-    content: string;
-    contentType: string;
-    duration: number;
-    error?: string;
-  } | null;
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      // Remove the data URL prefix (e.g., "data:application/json;base64,")
-      const base64 = result.split(',')[1] || '';
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function base64ToBlob(base64: string, type: string): Blob {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return new Blob([bytes], { type });
-}
-
-async function serializeRequest(req: Request): Promise<SerializedRequest> {
-  // Handle body serialization
-  let body = req.body;
-  if (req.body.type === 'form-data') {
-    body = {
-      ...req.body,
-      data: req.body.data.map(f => ({ ...f, file: null })),
-    };
-  } else if (req.body.type === 'binary') {
-    body = { ...req.body, file: null };
-  }
-
-  // Handle response body serialization (Blob -> base64)
-  let httpResponse: SerializedRequest['httpResponse'] = null;
-  if (req.httpResponse) {
-    const content = req.httpResponse.body instanceof Blob
-      ? await blobToBase64(req.httpResponse.body)
-      : '';
-    const contentType = req.httpResponse.body instanceof Blob
-      ? req.httpResponse.body.type
-      : 'application/octet-stream';
-    
-    httpResponse = {
-      status: req.httpResponse.status,
-      statusCode: req.httpResponse.statusCode,
-      headers: req.httpResponse.headers,
-      content,
-      contentType,
-      duration: req.httpResponse.duration,
-      error: req.httpResponse.error,
-    };
-  }
-
-  return {
-    ...req,
-    body,
-    httpResponse,
-  };
-}
-
-async function saveRequest(req: Request): Promise<void> {
-  const serialized = await serializeRequest(req);
-  await setValue(req.id, serialized);
-}
-
-function deserializeHistory(serialized: SerializedRequest[]): Request[] {
-  return serialized.map(req => {
-    // Reconstruct Blob from base64
-    let httpResponse = null;
-    if (req.httpResponse) {
-      const body = req.httpResponse.content
-        ? base64ToBlob(req.httpResponse.content, req.httpResponse.contentType)
-        : new Blob([]);
-      
-      httpResponse = {
-        status: req.httpResponse.status,
-        statusCode: req.httpResponse.statusCode,
-        headers: req.httpResponse.headers,
-        body,
-        duration: req.httpResponse.duration,
-        error: req.httpResponse.error,
-      };
-    }
-
-    return {
-      ...req,
-      protocol: req.protocol ?? 'rest',
-      variables: req.variables ?? [],
-      httpResponse,
-    };
-  });
-}
-
 const initialState: ClientState = {
   request: createNewRequest(),
-  history: [],
   sidebarCollapsed: false,
   aiPanelOpen: false,
 };
@@ -192,27 +90,11 @@ const initialState: ClientState = {
 export function ClientProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ClientState>(initialState);
 
-  // Load history from storage on mount
-  useEffect(() => {
-    async function loadHistory() {
-      try {
-        const entries = await listEntries();
-        const requests = await Promise.all(
-          entries.map(async (entry) => {
-            const serialized = await getValue<SerializedRequest>(entry.id);
-            return serialized ? deserializeHistory([serialized])[0] : null;
-          })
-        );
-        const history = requests
-          .filter((r): r is Request => r !== null)
-          .sort((a, b) => (b.executionTime ?? b.creationTime) - (a.executionTime ?? a.creationTime));
-        setState(prev => ({ ...prev, history }));
-      } catch (error) {
-        console.error('Failed to load history:', error);
-      }
-    }
-    loadHistory();
-  }, []);
+  // Use TanStack DB live query for history - sorted by execution time descending
+  const { data: history = [] } = useLiveQuery((q) =>
+    q.from({ req: requestsCollection })
+      .orderBy(({ req }) => req.executionTime ?? req.creationTime, 'desc')
+  );
 
   // Helper to update request
   const updateRequest = useCallback((updates: Partial<Request>) => {
@@ -312,8 +194,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         // Build gRPC proxy URL: /proxy/grpc/{host}/{service}/{method}
         const proxyUrl = `/proxy/grpc/${grpcHost}/${grpcService}/${grpcMethod}`;
 
-        const clientRequest = {
-          method: 'POST' as const,
+        const clientRequest: ClientRequest = {
+          method: 'POST',
           url: grpcUrl,
           headers: headersObj,
           query: {},
@@ -352,35 +234,25 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           executing: false,
         };
 
-        // Save to filesystem
-        saveRequest(updatedRequest);
+        // Save to collection (TanStack DB handles persistence)
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
 
-        setState(prev => {
-          const existingIndex = prev.history.findIndex(h => h.id === req.id);
-          let newHistory: Request[];
-
-          if (existingIndex >= 0) {
-            newHistory = [...prev.history];
-            newHistory[existingIndex] = updatedRequest;
-          } else {
-            newHistory = [updatedRequest, ...prev.history];
-          }
-
-          newHistory = newHistory
-            .sort((a, b) => (b.executionTime ?? 0) - (a.executionTime ?? 0))
-            .slice(0, 100);
-
-          return {
-            ...prev,
-            request: updatedRequest,
-            history: newHistory,
-          };
-        });
+        setState(prev => ({
+          ...prev,
+          request: updatedRequest,
+        }));
 
         return;
       }
 
-      // REST mode (existing logic)
+      // REST mode
       // Build query string
       const queryParams = new URLSearchParams();
       req.query.filter(p => p.enabled && p.key).forEach(p => {
@@ -439,7 +311,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             body = req.body.file;
             bodyForHistory = `[Binary file: ${req.body.fileName}]`;
             if (!headersObj['Content-Type']) {
-              headersObj['Content-Type'] = req.body.file.type || 'application/octet-stream';
+              headersObj['Content-Type'] = (req.body.file as File).type || 'application/octet-stream';
             }
           }
           break;
@@ -473,7 +345,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
 
       // Store the request for history (without file objects)
-      const clientRequest = {
+      const clientRequest: ClientRequest = {
         method: req.method,
         url: req.url,
         headers: headersObj,
@@ -525,34 +397,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         executing: false,
       };
       
-      // Save to filesystem
-      saveRequest(updatedRequest);
+      // Save to collection (TanStack DB handles persistence)
+      const existingInHistory = history.find(h => h.id === req.id);
+      if (existingInHistory) {
+        requestsCollection.update(req.id, (draft) => {
+          Object.assign(draft, updatedRequest);
+        });
+      } else {
+        requestsCollection.insert(updatedRequest);
+      }
 
-      // Update history - find existing entry by id and update, or add new
-      setState(prev => {
-        const existingIndex = prev.history.findIndex(h => h.id === req.id);
-        let newHistory: Request[];
-        
-        if (existingIndex >= 0) {
-          // Update in place
-          newHistory = [...prev.history];
-          newHistory[existingIndex] = updatedRequest;
-        } else {
-          // Add new entry
-          newHistory = [updatedRequest, ...prev.history];
-        }
-        
-        // Sort by executionTime descending and limit to 100
-        newHistory = newHistory
-          .sort((a, b) => (b.executionTime ?? 0) - (a.executionTime ?? 0))
-          .slice(0, 100);
-        
-        return {
-          ...prev,
-          request: updatedRequest,
-          history: newHistory,
-        };
-      });
+      setState(prev => ({
+        ...prev,
+        request: updatedRequest,
+      }));
       
     } catch (err) {
       const executionTime = Date.now();
@@ -575,33 +433,22 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         executing: false,
       };
       
-      // Save to filesystem
-      saveRequest(updatedRequest);
+      // Save to collection
+      const existingInHistory = history.find(h => h.id === req.id);
+      if (existingInHistory) {
+        requestsCollection.update(req.id, (draft) => {
+          Object.assign(draft, updatedRequest);
+        });
+      } else {
+        requestsCollection.insert(updatedRequest);
+      }
 
-      // Update history with failed request too
-      setState(prev => {
-        const existingIndex = prev.history.findIndex(h => h.id === req.id);
-        let newHistory: Request[];
-        
-        if (existingIndex >= 0) {
-          newHistory = [...prev.history];
-          newHistory[existingIndex] = updatedRequest;
-        } else {
-          newHistory = [updatedRequest, ...prev.history];
-        }
-        
-        newHistory = newHistory
-          .sort((a, b) => (b.executionTime ?? 0) - (a.executionTime ?? 0))
-          .slice(0, 100);
-        
-        return {
-          ...prev,
-          request: updatedRequest,
-          history: newHistory,
-        };
-      });
+      setState(prev => ({
+        ...prev,
+        request: updatedRequest,
+      }));
     }
-  }, [state.request, updateRequest]);
+  }, [state.request, updateRequest, history]);
 
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
@@ -650,17 +497,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearHistory = useCallback(async () => {
-    const entries = await listEntries();
-    await Promise.all(entries.map(entry => deleteValue(entry.id)));
-    setState(prev => ({ ...prev, history: [] }));
+    await clearAllRequests();
   }, []);
 
   const deleteHistoryEntry = useCallback(async (id: string) => {
-    await deleteValue(id);
-    setState(prev => ({
-      ...prev,
-      history: prev.history.filter(h => h.id !== id),
-    }));
+    requestsCollection.delete(id);
   }, []);
 
   const toggleSidebar = useCallback(() => {
@@ -680,7 +521,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   const value: ClientContextType = {
     request: state.request,
-    history: state.history,
+    history,
     sidebarCollapsed: state.sidebarCollapsed,
     aiPanelOpen: state.aiPanelOpen,
     setProtocol,
