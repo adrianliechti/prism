@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useClient } from '../context/useClient';
-import { AlertCircle, Loader2, SendHorizontal } from 'lucide-react';
+import { AlertCircle, SendHorizontal } from 'lucide-react';
 import {
   JsonViewer,
   XmlViewer,
@@ -121,11 +121,12 @@ export function ResponseViewer() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <div className="flex items-center gap-3">
-          <Loader2 className="w-5 h-5 animate-spin text-blue-500 dark:text-blue-400" />
-          <span className="text-sm text-neutral-500 dark:text-neutral-400">Sending request...</span>
+      <div className="flex flex-col items-center justify-center h-full min-h-50">
+        <div className="relative mb-4">
+          <div className="w-12 h-12 rounded-full border-2 border-zinc-100 dark:border-zinc-800"></div>
+          <div className="absolute inset-0 w-12 h-12 rounded-full border-2 border-zinc-400 border-t-transparent animate-spin"></div>
         </div>
+        <span className="text-xs font-medium text-zinc-400 uppercase tracking-widest animate-pulse">Sending Request</span>
       </div>
     );
   }

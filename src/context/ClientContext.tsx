@@ -4,6 +4,7 @@ import { useLiveQuery } from '@tanstack/react-db';
 import {
   requestsCollection,
   clearAllRequests,
+  generateId,
   type Request,
   type KeyValuePair,
   type HttpMethod,
@@ -13,10 +14,6 @@ import {
   type ClientRequest,
 } from '../lib/data';
 import { resolveVariables } from '../utils/variables';
-
-function generateId(): string {
-  return Math.random().toString(36).substring(2, 9);
-}
 
 function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
@@ -44,6 +41,7 @@ function createNewRequest(name?: string): Request {
 interface ClientState {
   request: Request;
   sidebarCollapsed: boolean;
+  aiPanelOpen: boolean;
 }
 
 interface ClientContextType {
@@ -72,6 +70,10 @@ interface ClientContextType {
   
   // Sidebar
   toggleSidebar: () => void;
+  
+  // AI Panel
+  aiPanelOpen: boolean;
+  toggleAiPanel: () => void;
 }
 
 export const ClientContext = createContext<ClientContextType | null>(null);
@@ -79,6 +81,7 @@ export const ClientContext = createContext<ClientContextType | null>(null);
 const initialState: ClientState = {
   request: createNewRequest(),
   sidebarCollapsed: false,
+  aiPanelOpen: false,
 };
 
 export function ClientProvider({ children }: { children: ReactNode }) {
@@ -502,6 +505,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, sidebarCollapsed: !prev.sidebarCollapsed }));
   }, []);
 
+  const toggleAiPanel = useCallback(() => {
+    setState(prev => ({ ...prev, aiPanelOpen: !prev.aiPanelOpen }));
+  }, []);
+
   const newRequest = useCallback(() => {
     setState(prev => ({
       ...prev,
@@ -513,6 +520,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     request: state.request,
     history,
     sidebarCollapsed: state.sidebarCollapsed,
+    aiPanelOpen: state.aiPanelOpen,
     setProtocol,
     setMethod,
     setUrl,
@@ -528,6 +536,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     clearHistory,
     deleteHistoryEntry,
     toggleSidebar,
+    toggleAiPanel,
   };
 
   return (

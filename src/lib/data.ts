@@ -23,6 +23,11 @@ export type {
   ClientResponse,
 };
 
+// Shared utility for generating unique IDs
+export function generateId(): string {
+  return Math.random().toString(36).substring(2, 9);
+}
+
 // ============================================================================
 // Serialization Types (internal)
 // ============================================================================
