@@ -21,6 +21,7 @@ export interface Variable {
 export type RequestBody =
   | { type: 'none' }
   | { type: 'json'; content: string }
+  | { type: 'xml'; content: string }
   | { type: 'form-urlencoded'; data: KeyValuePair[] }
   | { type: 'form-data'; data: FormDataField[] }
   | { type: 'raw'; content: string }
