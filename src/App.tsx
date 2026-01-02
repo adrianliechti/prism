@@ -2,7 +2,7 @@ import { ClientProvider } from './context/ClientContext';
 import { useClient } from './context/useClient';
 import { Sidebar } from './components/Sidebar';
 import { RequestPanel } from './components/RequestPanel';
-import { AiPanel } from './components/AiPanel';
+import { ChatPanel } from './components/ChatPanel';
 import { getStatusBadge, formatBytes } from './utils/format';
 import { getConfig } from './config';
 
@@ -51,9 +51,10 @@ function AppContent() {
         <StatusBar />
       </div>
 
-      {/* AI Panel - Inline */}
+      {/* Chat Panel - Inline */}
       {aiPanelOpen && getConfig().ai?.model && (
-        <AiPanel
+        <ChatPanel
+          isOpen={aiPanelOpen}
           onClose={toggleAiPanel}
           request={request}
           setters={{ setMethod, setUrl, setHeaders, setQuery, setBody }}
