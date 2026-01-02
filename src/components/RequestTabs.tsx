@@ -5,6 +5,7 @@ import { FormDataEditor } from './FormDataEditor';
 import { BinaryUploader } from './BinaryUploader';
 import { CodeEditor } from './CodeEditor';
 import { JsonEditor } from './JsonEditor';
+import { XmlEditor } from './XmlEditor';
 import type { RequestBody, FormDataField } from '../types/types';
 
 type Tab = 'headers' | 'params' | 'body';
@@ -14,6 +15,7 @@ type BodyType = RequestBody['type'];
 const bodyTypes: { value: BodyType; label: string }[] = [
   { value: 'none', label: 'None' },
   { value: 'json', label: 'JSON' },
+  { value: 'xml', label: 'XML' },
   { value: 'form-urlencoded', label: 'Form' },
   { value: 'form-data', label: 'Form Data' },
   { value: 'binary', label: 'Binary' },
@@ -104,6 +106,9 @@ export function RequestTabs() {
         break;
       case 'json':
         setBody({ type: 'json', content: body.type === 'json' ? body.content : '' });
+        break;
+      case 'xml':
+        setBody({ type: 'xml', content: body.type === 'xml' ? body.content : '' });
         break;
       case 'raw':
         setBody({ type: 'raw', content: body.type === 'raw' ? body.content : '' });
@@ -214,6 +219,16 @@ export function RequestTabs() {
                 variables={variables}
                 onVariablesChange={setVariables}
                 placeholder={'{\n  "key": "value"\n}'}
+              />
+            )}
+
+            {body.type === 'xml' && (
+              <XmlEditor
+                value={body.content}
+                onChange={(content) => setBody({ ...body, content })}
+                variables={variables}
+                onVariablesChange={setVariables}
+                placeholder={'<?xml version="1.0" encoding="UTF-8"?>\n<root>\n  <element>value</element>\n</root>'}
               />
             )}
 

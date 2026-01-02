@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useClient } from '../context/useClient';
 import { AlertCircle, SendHorizontal } from 'lucide-react';
-import { JsonViewer } from './JsonViewer';
-import { XmlViewer } from './XmlViewer';
-import { YamlViewer } from './YamlViewer';
-import { TextViewer } from './TextViewer';
-import { BinaryViewer } from './BinaryViewer';
-import { ImageViewer } from './ImageViewer';
-import { EventStreamViewer } from './EventStreamViewer';
+import {
+  JsonViewer,
+  XmlViewer,
+  YamlViewer,
+  TextViewer,
+  BinaryViewer,
+  ImageViewer,
+  EventStreamViewer,
+} from './viewers';
 
 type ViewMode = 'pretty' | 'raw';
 type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary' | 'image' | 'sse';
