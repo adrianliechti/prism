@@ -42,7 +42,9 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
       };
       break;
     case 'mcp':
-      base.mcp = {};
+      base.mcp = {
+        headers: [createEmptyKeyValue()],
+      };
       break;
     case 'rest':
     default:
@@ -93,6 +95,7 @@ interface ClientContextType {
   // MCP-specific actions
   setMcpTool: (tool: { name: string; arguments: string } | undefined) => void;
   setMcpResource: (resource: { uri: string } | undefined) => void;
+  setMcpHeaders: (headers: KeyValuePair[]) => void;
   discoverMcpFeatures: () => Promise<McpListFeaturesResponse | null>;
   
   // History actions
@@ -273,7 +276,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: {
         ...prev.request,
-        mcp: { tool, resource: undefined },
+        mcp: { 
+          headers: prev.request.mcp?.headers ?? [createEmptyKeyValue()],
+          tool, 
+          resource: undefined 
+        },
       },
     }));
   }, []);
@@ -283,7 +290,23 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: {
         ...prev.request,
-        mcp: { resource, tool: undefined },
+        mcp: { 
+          headers: prev.request.mcp?.headers ?? [createEmptyKeyValue()],
+          resource, 
+          tool: undefined 
+        },
+      },
+    }));
+  }, []);
+
+  const setMcpHeaders = useCallback((headers: KeyValuePair[]) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        mcp: prev.request.mcp
+          ? { ...prev.request.mcp, headers }
+          : { headers },
       },
     }));
   }, []);
@@ -301,7 +324,19 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         throw new Error('Invalid MCP server URL');
       }
 
-      const response = await fetch(path);
+      // Convert KeyValuePair[] to headers object
+      const mcpHeaders: Record<string, string> = {};
+      for (const kv of req.mcp?.headers ?? []) {
+        if (kv.enabled && kv.key) {
+          mcpHeaders[kv.key] = kv.value;
+        }
+      }
+
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ headers: mcpHeaders }),
+      });
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `HTTP ${response.status}`);
@@ -449,13 +484,21 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             }
           }
 
+          // Convert KeyValuePair[] to headers object
+          const mcpHeaders: Record<string, string> = {};
+          for (const kv of req.mcp?.headers ?? []) {
+            if (kv.enabled && kv.key) {
+              mcpHeaders[kv.key] = kv.value;
+            }
+          }
+
           const path = buildMcpProxyPath(serverUrl, 'tool/call');
           if (!path) throw new Error('Invalid MCP server URL');
 
           const response = await fetch(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: req.mcp.tool.name, arguments: args }),
+            body: JSON.stringify({ name: req.mcp.tool.name, arguments: args, headers: mcpHeaders }),
           });
 
           if (!response.ok) {
@@ -470,10 +513,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const path = buildMcpProxyPath(serverUrl, 'resource/call');
           if (!path) throw new Error('Invalid MCP server URL');
 
+          // Convert KeyValuePair[] to headers object
+          const mcpHeaders: Record<string, string> = {};
+          for (const kv of req.mcp?.headers ?? []) {
+            if (kv.enabled && kv.key) {
+              mcpHeaders[kv.key] = kv.value;
+            }
+          }
+
           const response = await fetch(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uri: req.mcp.resource.uri }),
+            body: JSON.stringify({ uri: req.mcp.resource.uri, headers: mcpHeaders }),
           });
 
           if (!response.ok) {
@@ -727,7 +778,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           executionTime,
           executing: false,
           mcp: {
-            ...req.mcp,
+            headers: req.mcp?.headers ?? [],
+            tool: req.mcp?.tool,
+            resource: req.mcp?.resource,
             response: {
               result: undefined,
               duration: 0,
@@ -880,6 +933,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setGrpcMethodSchema,
     setMcpTool,
     setMcpResource,
+    setMcpHeaders,
     discoverMcpFeatures,
     loadFromHistory,
     clearHistory,

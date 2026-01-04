@@ -79,6 +79,7 @@ interface GrpcSettings {
 // MCP-specific settings
 interface McpSettings {
   url: string;         // MCP server URL
+  headers?: KeyValuePair[]; // MCP request headers
   tool?: {
     name: string;
     arguments: string; // JSON parameters
@@ -179,6 +180,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
     case 'mcp': {
       base.mcp = {
         url: req.url,
+        headers: req.mcp?.headers,
         tool: req.mcp?.tool,
         resource: req.mcp?.resource,
         response: req.mcp?.response,
@@ -262,6 +264,7 @@ function deserializeRequest(serialized: SerializedRequest): Request {
     const mcp = serialized.mcp;
     base.url = mcp.url;
     base.mcp = {
+      headers: mcp.headers ?? [],
       tool: mcp.tool,
       resource: mcp.resource,
       response: mcp.response,

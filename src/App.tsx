@@ -4,48 +4,7 @@ import { useClient } from './context/useClient';
 import { Sidebar } from './components/Sidebar';
 import { RequestPanel } from './components/RequestPanel';
 import { ChatPanel } from './components/ChatPanel';
-import { getStatusBadge, formatBytes } from './utils/format';
 import { getConfig } from './config';
-
-function StatusBar() {
-  const { request } = useClient();
-
-  const response = request?.http?.response || request?.grpc?.response;
-  if (!response) {
-    return null;
-  }
-
-  // For gRPC, create a compatible response object
-  const displayResponse = 'statusCode' in response ? response : {
-    statusCode: response.error ? 0 : 200,
-    status: response.error || 'OK',
-    duration: response.duration,
-    body: { size: response.body?.length || 0 },
-  };
-
-  return (
-    <div className="px-3 py-2 flex items-center gap-4 text-xs shrink-0">
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(displayResponse.statusCode)}`}>
-        {displayResponse.statusCode > 0 ? displayResponse.status : 'Error'}
-      </span>
-      <div className="flex items-center gap-2">
-        <span className="text-neutral-400 dark:text-neutral-500">Time:</span>
-        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{displayResponse.duration}ms</span>
-      </div>
-      {('body' in displayResponse && displayResponse.body instanceof Blob) ? (
-        <div className="flex items-center gap-2">
-          <span className="text-neutral-400 dark:text-neutral-500">Size:</span>
-          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(displayResponse.body.size)}</span>
-        </div>
-      ) : ('body' in displayResponse && typeof displayResponse.body === 'object' && 'size' in displayResponse.body) ? (
-        <div className="flex items-center gap-2">
-          <span className="text-neutral-400 dark:text-neutral-500">Size:</span>
-          <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(displayResponse.body.size as number)}</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function AppContent() {
   const { request, aiPanelOpen, toggleAiPanel, setMethod, setUrl, setHeaders, setQuery, setBody } = useClient();
@@ -61,9 +20,6 @@ function AppContent() {
         <div className="flex-1 overflow-hidden min-h-0">
           <RequestPanel />
         </div>
-
-        {/* Status Bar - Fixed at bottom */}
-        <StatusBar />
       </div>
 
       {/* Chat Panel - Inline */}

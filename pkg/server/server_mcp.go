@@ -10,9 +10,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// headerTransport wraps an http.RoundTripper to add custom headers
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	return t.base.RoundTrip(req)
+}
+
 // connectMcp creates a new MCP client, connects to the server via Streamable HTTP,
 // and returns the session. The caller is responsible for closing the session.
-func connectMcp(ctx context.Context, serverURL string) (*mcp.ClientSession, error) {
+func connectMcp(ctx context.Context, serverURL string, headers map[string]string) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "prism",
 		Version: "1.0.0",
@@ -20,6 +33,16 @@ func connectMcp(ctx context.Context, serverURL string) (*mcp.ClientSession, erro
 
 	transport := &mcp.StreamableClientTransport{
 		Endpoint: serverURL,
+	}
+
+	// Add custom headers via HTTP client if provided
+	if len(headers) > 0 {
+		transport.HTTPClient = &http.Client{
+			Transport: &headerTransport{
+				base:    http.DefaultTransport,
+				headers: headers,
+			},
+		}
 	}
 
 	session, err := client.Connect(ctx, transport, nil)
@@ -51,8 +74,9 @@ func mcpTargetURL(r *http.Request) (string, error) {
 	return target, nil
 }
 
-// handleMcpListFeatures handles GET /proxy/mcp/{scheme}/{host}/features?path=...
+// handleMcpListFeatures handles POST /proxy/mcp/{scheme}/{host}/features?path=...
 // It connects to the MCP server, fetches tools and resources, and returns them combined.
+// Request body: McpListFeaturesRequest (optional, for headers)
 func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 	serverURL, err := mcpTargetURL(r)
 	if err != nil {
@@ -60,9 +84,14 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req McpListFeaturesRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL)
+	session, err := connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return
@@ -134,7 +163,7 @@ func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL)
+	session, err := connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return
@@ -172,7 +201,7 @@ func (s *Server) handleMcpReadResource(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL)
+	session, err := connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return

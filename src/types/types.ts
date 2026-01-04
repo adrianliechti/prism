@@ -141,6 +141,7 @@ export interface GrpcRequestData {
 }
 
 export interface McpRequestData {
+  headers: KeyValuePair[]; // MCP request headers (for auth, etc.)
   tool?: {
     name: string;
     arguments: string; // JSON parameters

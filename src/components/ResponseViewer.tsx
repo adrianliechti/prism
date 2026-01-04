@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useClient } from '../context/useClient';
 import { AlertCircle, SendHorizontal, Clock, CheckCircle2, XCircle } from 'lucide-react';
 import { HttpResponseViewer } from './http';
@@ -36,6 +37,8 @@ function StatusBadge({ statusCode, status }: { statusCode: number; status: strin
 
 export function ResponseViewer() {
   const { request } = useClient();
+  const [viewMode, setViewMode] = useState<'pretty' | 'raw'>('pretty');
+  const [showHeaders, setShowHeaders] = useState(false);
 
   const isLoading = request?.executing ?? false;
   const protocol = request?.protocol ?? 'rest';
@@ -104,25 +107,46 @@ export function ResponseViewer() {
           return (
             <McpResponseViewer 
               toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined} 
-              resourceResponse={!isToolResponse ? mcpResponse.result as McpReadResourceResponse : undefined} 
+              resourceResponse={!isToolResponse ? mcpResponse.result as McpReadResourceResponse : undefined}
+              viewMode={viewMode}
             />
           );
         }
         break;
       case 'grpc':
         if (response) {
-          return <GrpcResponseViewer response={response} />;
+          return (
+            <GrpcResponseViewer 
+              response={response}
+              viewMode={viewMode}
+            />
+          );
         }
         break;
       case 'rest':
       default:
         if (response) {
-          return <HttpResponseViewer response={response} />;
+          return (
+            <HttpResponseViewer 
+              response={response}
+              viewMode={viewMode}
+            />
+          );
         }
         break;
     }
     return null;
   };
+
+  // Detect content type for showing appropriate controls
+  const contentType = response?.headers?.['content-type']?.toLowerCase() || '';
+  const isBinaryOrImage = contentType.includes('image/') || 
+    contentType.includes('video/') || 
+    contentType.includes('audio/') ||
+    contentType.includes('application/pdf') ||
+    contentType.includes('application/octet-stream');
+  const showViewModeToggle = !isBinaryOrImage; // Show for all protocols including MCP
+  const showHeadersToggle = protocol !== 'mcp' && response;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -144,17 +168,84 @@ export function ResponseViewer() {
             </>
           )}
           {mcpResponse && (
-            <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
-              <Clock size={12} />
-              <span>{formatDuration(mcpResponse.duration)}</span>
+            <>
+              <StatusBadge statusCode={200} status="OK" />
+              <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                <Clock size={12} />
+                <span>{formatDuration(mcpResponse.duration)}</span>
+              </div>
+            </>
+          )}
+          
+          {/* View Mode Toggle */}
+          <div className="flex-1" />
+          {showViewModeToggle && (
+            <div className="flex items-center gap-0.5 text-xs">
+              <button
+                onClick={() => setViewMode('pretty')}
+                className={`px-2 py-0.5 rounded transition-colors ${
+                  viewMode === 'pretty'
+                    ? 'text-neutral-700 dark:text-neutral-200 font-medium'
+                    : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300'
+                }`}
+              >
+                Pretty
+              </button>
+              <span className="text-neutral-300 dark:text-neutral-600">|</span>
+              <button
+                onClick={() => setViewMode('raw')}
+                className={`px-2 py-0.5 rounded transition-colors ${
+                  viewMode === 'raw'
+                    ? 'text-neutral-700 dark:text-neutral-200 font-medium'
+                    : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300'
+                }`}
+              >
+                Raw
+              </button>
             </div>
+          )}
+          {showHeadersToggle && (
+            <button
+              onClick={() => setShowHeaders(!showHeaders)}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                showHeaders
+                  ? 'text-neutral-700 dark:text-neutral-200 font-medium'
+                  : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300'
+              }`}
+            >
+              {protocol === 'grpc' ? 'Metadata' : 'Headers'} ({Object.keys(response.headers).length})
+            </button>
           )}
         </div>
       )}
 
-      {/* Protocol-specific viewer */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {renderProtocolViewer()}
+      {/* Split Panel Layout - Body and Headers */}
+      <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
+        {/* Main Content */}
+        <div className={`min-h-0 overflow-hidden transition-all ${
+          showHeaders ? 'flex-2' : 'flex-1'
+        }`}>
+          {renderProtocolViewer()}
+        </div>
+        
+        {/* Headers/Metadata Panel - Right Side */}
+        {showHeaders && response && (
+          <div className="flex-1 min-w-75 max-w-125 flex flex-col border-l border-neutral-200 dark:border-white/10 pl-3">
+            <div className="text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-2">
+              {protocol === 'grpc' ? 'Metadata' : 'Headers'} ({Object.keys(response.headers).length})
+            </div>
+            <div className="flex-1 overflow-auto">
+              <div className="space-y-2">
+                {Object.entries(response.headers).map(([key, value]) => (
+                  <div key={key} className="text-xs">
+                    <div className="font-mono text-neutral-600 dark:text-neutral-400 mb-0.5">{key}</div>
+                    <div className="font-mono text-neutral-700 dark:text-neutral-200 break-all">{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -37,29 +37,19 @@ type McpListFeaturesResponse struct {
 	Resources []McpFeature `json:"resources"`
 }
 
+type McpListFeaturesRequest struct {
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 type McpCallToolRequest struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments,omitempty"`
-}
-
-type McpCallToolResponse struct {
-	Content []McpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
-}
-
-type McpContent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Data     string `json:"data,omitempty"`
-	MimeType string `json:"mimeType,omitempty"`
+	Name      string            `json:"name"`
+	Arguments map[string]any    `json:"arguments,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 }
 
 type McpReadResourceRequest struct {
-	URI string `json:"uri"`
-}
-
-type McpReadResourceResponse struct {
-	Contents []McpResourceContent `json:"contents"`
+	URI     string            `json:"uri"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type McpResourceContent struct {
@@ -67,4 +57,20 @@ type McpResourceContent struct {
 	MimeType string `json:"mimeType,omitempty"`
 	Text     string `json:"text,omitempty"`
 	Blob     string `json:"blob,omitempty"`
+}
+
+// Wrapper types for responses with timing
+
+type McpResponseWrapper struct {
+	Headers  map[string]string `json:"headers,omitempty"`
+	Result   interface{}       `json:"result,omitempty"`
+	Error    string            `json:"error,omitempty"`
+	Duration int64             `json:"duration"`
+}
+
+type GrpcResponseWrapper struct {
+	Body     string            `json:"body"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Error    string            `json:"error,omitempty"`
+	Duration int64             `json:"duration"`
 }

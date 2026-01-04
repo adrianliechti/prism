@@ -13,17 +13,6 @@ const methodColors: Record<HttpMethod, string> = {
   HEAD: 'text-neutral-500 dark:text-neutral-400',
 };
 
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-  
-  if (isToday) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
 function getStatusColor(statusCode: number | null): string {
   if (!statusCode) return 'bg-neutral-500';
   if (statusCode >= 200 && statusCode < 300) return 'bg-green-500';
@@ -41,6 +30,29 @@ function getHostname(entry: Request): string {
 }
 
 function getDisplayPath(entry: Request): string {
+  // For MCP, show tool or resource name
+  if (entry.protocol === 'mcp') {
+    if (entry.mcp?.tool?.name) {
+      return entry.mcp.tool.name;
+    }
+    if (entry.mcp?.resource?.uri) {
+      return entry.mcp.resource.uri;
+    }
+    return 'MCP Request';
+  }
+  // For gRPC, show just the method name (last part of path)
+  if (entry.protocol === 'grpc') {
+    try {
+      const url = new URL(entry.url);
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts.length > 0) {
+        return parts[parts.length - 1]; // Return just the method name
+      }
+    } catch {
+      // Fall through
+    }
+    return entry.url;
+  }
   try {
     const url = new URL(entry.url);
     return url.pathname + url.search;
@@ -53,12 +65,18 @@ function getDisplayMethod(entry: Request): string {
   if (entry.protocol === 'grpc') {
     return 'gRPC';
   }
+  if (entry.protocol === 'mcp') {
+    return 'MCP';
+  }
   return entry.http?.method ?? 'GET';
 }
 
 function getMethodColor(entry: Request): string {
   if (entry.protocol === 'grpc') {
     return 'text-cyan-600 dark:text-cyan-400';
+  }
+  if (entry.protocol === 'mcp') {
+    return 'text-violet-600 dark:text-violet-400';
   }
   return methodColors[entry.http?.method ?? 'GET'];
 }
@@ -157,23 +175,18 @@ export function Sidebar() {
                       <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1" title={entry.url}>
                         {getDisplayPath(entry)}
                       </span>
-                      <div className="flex items-center justify-end text-[10px] text-neutral-400 dark:text-neutral-600 shrink-0 w-12 h-5">
-                        <span className="group-hover:hidden">
-                          {formatTimestamp(entry.executionTime ?? entry.creationTime)}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteHistoryEntry(entry.id);
-                          }}
-                          className="hidden group-hover:inline-flex items-center justify-center w-5 h-5 hover:bg-neutral-200 dark:hover:bg-white/8 rounded transition-colors"
-                          title="Delete"
-                        >
-                          <svg className="w-3 h-3 text-neutral-400 dark:text-neutral-500 hover:text-rose-500 dark:hover:text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteHistoryEntry(entry.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-5 h-5 hover:bg-neutral-200 dark:hover:bg-white/8 rounded transition-all shrink-0"
+                        title="Delete"
+                      >
+                        <svg className="w-3 h-3 text-neutral-400 dark:text-neutral-500 hover:text-rose-500 dark:hover:text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
                   ))}
                 </div>
