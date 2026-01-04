@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { File, Clock, Hash, Shuffle, Sparkles, Check, Eye } from 'lucide-react';
-import type { Variable, VariableType } from '../types/types';
-import { resolveVariables } from '../utils/variables';
-import { useEditor } from './editor';
+import type { Variable, VariableType } from '../../types/types';
+import { resolveVariables } from '../../utils/variables';
+import { useEditor } from './useEditor';
 
-interface XmlEditorProps {
+interface JsonEditorProps {
   value: string;
   onChange: (value: string) => void;
   variables: Variable[];
   onVariablesChange: (variables: Variable[]) => void;
   placeholder?: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 interface VariableTypeOption {
@@ -28,73 +32,11 @@ const variableTypes: VariableTypeOption[] = [
   { type: 'random_string', label: 'Random String', description: '16-char random', icon: <Shuffle className="w-3.5 h-3.5" /> },
 ];
 
-// Simple XML validation
-function validateXml(xml: string): { valid: boolean; error?: string } {
-  if (!xml.trim()) return { valid: true };
-  
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, 'application/xml');
-    const errorNode = doc.querySelector('parsererror');
-    
-    if (errorNode) {
-      // Extract error message
-      const errorText = errorNode.textContent || 'Invalid XML';
-      // Clean up the error message
-      const match = errorText.match(/error[^:]*:\s*(.+)/i);
-      return { valid: false, error: match ? match[1].trim() : errorText.split('\n')[0] };
-    }
-    
-    return { valid: true };
-  } catch (err) {
-    return { valid: false, error: err instanceof Error ? err.message : 'Invalid XML' };
-  }
-}
-
-// Format XML with indentation
-function formatXml(xml: string): string {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, 'application/xml');
-    if (doc.querySelector('parsererror')) {
-      return xml; // Return as-is if invalid
-    }
-    
-    const serializer = new XMLSerializer();
-    const result = serializer.serializeToString(doc);
-    
-    // Basic pretty-print
-    let formatted = '';
-    let indent = 0;
-    const lines = result.replace(/></g, '>\n<').split('\n');
-    
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      
-      // Decrease indent for closing tags
-      if (trimmed.startsWith('</')) {
-        indent = Math.max(0, indent - 1);
-      }
-      
-      formatted += '  '.repeat(indent) + trimmed + '\n';
-      
-      // Increase indent for opening tags (not self-closing)
-      if (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.startsWith('<?') && !trimmed.endsWith('/>')) {
-        indent++;
-      }
-    }
-    
-    return formatted.trim();
-  } catch {
-    return xml;
-  }
-}
-
-export function XmlEditor({ value, onChange, variables, onVariablesChange, placeholder }: XmlEditorProps) {
+export function JsonEditor({ value, onChange, variables, onVariablesChange, placeholder, action }: JsonEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // Use the hook
   const {
     handleInput,
     handlePaste,
@@ -110,7 +52,7 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
     onChange,
     variables,
     onVariablesChange,
-    indentTriggers: ['>', '{', '['], // XML uses > for tag opening
+    indentTriggers: ['{', '['],
   });
 
   // Popover state
@@ -124,66 +66,87 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
   const wasInvalidRef = useRef(false);
   const autoFormatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // XML validity (with variable placeholders replaced)
-  const xmlValidity = useMemo(() => {
+  // JSON validity
+  const jsonValidity = useMemo(() => {
     if (!value.trim()) return { valid: true, empty: true };
-    // Replace variable markers with placeholder text for validation
-    let temp = value;
-    temp = temp.replace(/\{\{[^{}]+\}\}/g, 'PLACEHOLDER');
-    const result = validateXml(temp);
-    return { ...result, empty: false };
+    try {
+      let temp = value;
+      temp = temp.replace(/"\{\{[^{}]+\}\}"/g, '"__var__"');
+      temp = temp.replace(/\{\{[^{}]+\}\}/g, 'null');
+      JSON.parse(temp);
+      return { valid: true, empty: false };
+    } catch (err) {
+      return { valid: false, empty: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+    }
   }, [value]);
 
-  // State for showing raw preview
+  // State for showing raw JSON preview
   const [showRaw, setShowRaw] = useState(false);
 
-  // Resolve variables to get raw XML
-  const resolvedXml = useMemo(() => {
+  // Resolve variables to get raw JSON
+  const resolvedJson = useMemo(() => {
     return resolveVariables(value, variables, {
       missingDataPlaceholder: '[no data]',
     });
   }, [value, variables]);
 
-  // Auto-format when XML becomes valid after being invalid
+  // Auto-format when JSON becomes valid after being invalid
   useEffect(() => {
     if (autoFormatTimeoutRef.current) {
       clearTimeout(autoFormatTimeoutRef.current);
       autoFormatTimeoutRef.current = null;
     }
     
-    if (xmlValidity.valid && !xmlValidity.empty && wasInvalidRef.current) {
+    if (jsonValidity.valid && !jsonValidity.empty && wasInvalidRef.current) {
       autoFormatTimeoutRef.current = setTimeout(() => {
-        // Preserve variable markers during formatting
-        const placeholders: Map<string, string> = new Map();
-        let content = value;
-        let index = 0;
-        
-        content = content.replace(/\{\{[^{}]+\}\}/g, (match) => {
-          const ph = `__VAR_${index++}__`;
-          placeholders.set(ph, match);
-          return ph;
-        });
-        
-        let formatted = formatXml(content);
-        
-        placeholders.forEach((original, ph) => {
-          formatted = formatted.replace(ph, original);
-        });
-        
-        if (formatted !== value) {
-          onChange(formatted);
+        try {
+          let temp = value;
+          temp = temp.replace(/"\{\{[^{}]+\}\}"/g, '"__var__"');
+          temp = temp.replace(/\{\{[^{}]+\}\}/g, 'null');
+          JSON.parse(temp);
+          
+          const placeholders: Map<string, string> = new Map();
+          let content = value;
+          let index = 0;
+          
+          content = content.replace(/"\{\{[^{}]+\}\}"/g, (match) => {
+            const ph = `"__VAR_${index++}__"`;
+            placeholders.set(ph, match);
+            return ph;
+          });
+          content = content.replace(/\{\{[^{}]+\}\}/g, (match) => {
+            const ph = `"__VAR_${index++}__"`;
+            placeholders.set(ph, match);
+            return ph;
+          });
+          
+          const parsed = JSON.parse(content);
+          let formatted = JSON.stringify(parsed, null, 2);
+          
+          formatted = formatted.replace(/\{\}/g, '{\n}');
+          formatted = formatted.replace(/\[\]/g, '[\n]');
+          
+          placeholders.forEach((original, ph) => {
+            formatted = formatted.replace(ph, original);
+          });
+          
+          if (formatted !== value) {
+            onChange(formatted);
+          }
+        } catch {
+          // Ignore
         }
       }, 500);
     }
     
-    wasInvalidRef.current = !xmlValidity.valid;
+    wasInvalidRef.current = !jsonValidity.valid;
     
     return () => {
       if (autoFormatTimeoutRef.current) {
         clearTimeout(autoFormatTimeoutRef.current);
       }
     };
-  }, [xmlValidity.valid, xmlValidity.empty, value, onChange]);
+  }, [jsonValidity.valid, jsonValidity.empty, value, onChange]);
 
   // Initial build and rebuild when switching back from raw mode
   useEffect(() => {
@@ -314,7 +277,7 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
       {/* Editor or Raw View */}
       {showRaw ? (
         <pre className="flex-1 min-h-0 p-3 font-mono text-sm text-zinc-100 overflow-y-auto whitespace-pre-wrap wrap-break-word">
-          {resolvedXml}
+          {resolvedJson}
         </pre>
       ) : (
         <div className="flex-1 min-h-0 relative">
@@ -337,18 +300,28 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
       )}
       
       {/* Status bar */}
-      <div className="flex items-center justify-end gap-2 px-3 py-1.5 text-xs shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-xs shrink-0">
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="text-[11px] px-2 py-0.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+          >
+            {action.label}
+          </button>
+        )}
+        <div className="flex-1" />
         <button
           onClick={() => setShowRaw(!showRaw)}
           className={`transition-colors flex items-center gap-1 ${showRaw ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-500 hover:text-zinc-300'}`}
-          title={showRaw ? "Show editor" : "Show resolved XML"}
+          title={showRaw ? "Show editor" : "Show resolved JSON"}
         >
           <Eye className="w-3.5 h-3.5" />
         </button>
-        {xmlValidity.valid ? (
-          <span className="text-emerald-500">Valid XML</span>
+        {jsonValidity.valid ? (
+          <span className="text-emerald-500">Valid JSON</span>
         ) : (
-          <span className="text-red-400" title={xmlValidity.error}>Invalid XML</span>
+          <span className="text-red-400" title={jsonValidity.error}>Invalid JSON</span>
         )}
       </div>
       

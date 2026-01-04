@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { useClient } from '../../context/useClient';
-import { KeyValueEditor } from '../KeyValueEditor';
-import { FormDataEditor } from '../FormDataEditor';
-import { BinaryUploader } from '../BinaryUploader';
-import { CodeEditor } from '../CodeEditor';
-import { JsonEditor } from '../JsonEditor';
-import { XmlEditor } from '../XmlEditor';
+import { KeyValueEditor, FormDataEditor, BinaryUploader, CodeEditor, JsonEditor, XmlEditor } from '../editors';
 import type { RequestBody, FormDataField } from '../../types/types';
 
 type Tab = 'headers' | 'params' | 'body';

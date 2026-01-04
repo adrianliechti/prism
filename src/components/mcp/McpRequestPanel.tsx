@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useClient } from '../../context/useClient';
-import { JsonEditor } from '../JsonEditor';
-import { KeyValueEditor } from '../KeyValueEditor';
+import { JsonEditor, KeyValueEditor } from '../editors';
 
 type Tab = 'headers' | 'body';
 
