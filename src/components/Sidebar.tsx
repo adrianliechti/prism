@@ -13,14 +13,6 @@ const methodColors: Record<HttpMethod, string> = {
   HEAD: 'text-neutral-500 dark:text-neutral-400',
 };
 
-function getStatusColor(statusCode: number | null): string {
-  if (!statusCode) return 'bg-neutral-500';
-  if (statusCode >= 200 && statusCode < 300) return 'bg-green-500';
-  if (statusCode >= 300 && statusCode < 400) return 'bg-yellow-500';
-  if (statusCode >= 400 && statusCode < 500) return 'bg-orange-500';
-  return 'bg-red-500';
-}
-
 function getHostname(entry: Request): string {
   try {
     return new URL(entry.url).hostname;
@@ -172,14 +164,6 @@ export function Sidebar() {
                       className="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 cursor-pointer transition-colors"
                       onClick={() => loadFromHistory(entry)}
                     >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(
-                          entry.http?.response?.statusCode ?? 
-                          (entry.grpc?.response?.error ? 0 : entry.grpc?.response ? 200 : null) ??
-                          (entry.mcp?.response?.error ? 0 : entry.mcp?.response ? 200 : null) ??
-                          (entry.openai?.response?.error ? 0 : entry.openai?.response ? 200 : null)
-                        )}`}
-                      />
                       <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>
                         {getDisplayMethod(entry)}
                       </span>

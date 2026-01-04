@@ -7,7 +7,58 @@ import { ChatPanel } from './components/ChatPanel';
 import { getConfig } from './config';
 
 function AppContent() {
-  const { request, aiPanelOpen, toggleAiPanel, setMethod, setUrl, setHeaders, setQuery, setBody } = useClient();
+  const { 
+    request, 
+    aiPanelOpen, 
+    toggleAiPanel, 
+    // HTTP setters
+    setMethod, 
+    setUrl, 
+    setHeaders, 
+    setQuery, 
+    setBody,
+    // gRPC setters
+    setGrpcBody,
+    setGrpcMetadata,
+    // MCP setters
+    setMcpHeaders,
+    setMcpTool,
+    setMcpResource,
+    // OpenAI setters
+    setOpenAIModel,
+    setOpenAIBodyType,
+    setOpenAIChatInput,
+    setOpenAIImagePrompt,
+    setOpenAIImageFiles,
+    setOpenAIAudioText,
+    setOpenAIAudioVoice,
+    setOpenAIEmbeddingsInput,
+  } = useClient();
+
+  const allSetters = {
+    // HTTP
+    setMethod,
+    setUrl,
+    setHeaders,
+    setQuery,
+    setBody,
+    // gRPC
+    setGrpcBody,
+    setGrpcMetadata,
+    // MCP
+    setMcpHeaders,
+    setMcpTool,
+    setMcpResource,
+    // OpenAI
+    setOpenAIModel,
+    setOpenAIBodyType,
+    setOpenAIChatInput,
+    setOpenAIImagePrompt,
+    setOpenAIImageFiles,
+    setOpenAIAudioText,
+    setOpenAIAudioVoice,
+    setOpenAIEmbeddingsInput,
+  };
 
   return (
     <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2 text-neutral-900 dark:text-neutral-100">
@@ -28,7 +79,7 @@ function AppContent() {
           isOpen={aiPanelOpen}
           onClose={toggleAiPanel}
           request={request}
-          setters={{ setMethod, setUrl, setHeaders, setQuery, setBody }}
+          setters={allSetters}
         />
       )}
     </div>
