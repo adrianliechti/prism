@@ -4,10 +4,10 @@ import { Sparkles } from 'lucide-react';
 import { getConfig } from '../config';
 
 export function SharedRequestActions() {
-  const { request, executeRequest, aiPanelOpen, toggleAiPanel } = useClient();
+  const { request, isExecuting, executeRequest, aiPanelOpen, toggleAiPanel } = useClient();
 
   const hasAiModel = Boolean(getConfig().ai?.model);
-  const isLoading = request?.executing ?? false;
+  const isLoading = isExecuting;
   const protocol = request?.protocol ?? 'rest';
   const url = request?.url ?? '';
 
@@ -24,12 +24,33 @@ export function SharedRequestActions() {
 
   const mcpHasToolOrResource = !!request?.mcp?.tool || !!request?.mcp?.resource;
 
+  const openaiModel = request?.openai?.model ?? '';
+  const openaiChatInput = request?.openai?.chat?.input ?? [];
+  const openaiImage = request?.openai?.image;
+  const openaiImagePrompt = openaiImage?.prompt ?? '';
+  const openaiAudioText = request?.openai?.audio?.text ?? '';
+  const openaiTranscriptionFile = request?.openai?.transcription?.file ?? '';
+  const openaiEmbeddingsInput = request?.openai?.embeddings?.input ?? [];
+  
+  // Check if OpenAI has valid input
+  const openaiHasValidInput = request?.openai?.chat
+    ? openaiChatInput.length > 0 && openaiChatInput.some(msg => msg.content.length > 0)
+    : request?.openai?.image
+      ? openaiImagePrompt.trim().length > 0
+      : request?.openai?.transcription
+        ? openaiTranscriptionFile.length > 0
+        : request?.openai?.embeddings
+          ? openaiEmbeddingsInput.some(item => item.text.trim().length > 0)
+          : openaiAudioText.trim().length > 0;
+
   // Check if we can execute
   const canExecute = protocol === 'rest'
     ? url.length > 0
     : protocol === 'mcp'
       ? url.length > 0 && mcpHasToolOrResource
-      : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
+      : protocol === 'openai'
+        ? url.length > 0 && openaiModel.length > 0 && openaiHasValidInput
+        : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
 
   const handleSubmit = () => {
     executeRequest();

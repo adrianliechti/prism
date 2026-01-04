@@ -82,6 +82,7 @@ function TypeBadge({ type, language }: { type: string; language?: HighlightLangu
       case 'image': return <Image size={12} />;
       case 'audio': return <Music size={12} />;
       case 'resource': return <Link2 size={12} />;
+      case 'resource_link': return <Link2 size={12} />;
       default: return <FileText size={12} />;
     }
   };
@@ -129,6 +130,9 @@ function ContentCard({ content, index, isError }: { content: McpContent; index: 
     }
     if (content.type === 'resource') {
       return { type: 'resource', label: 'Resource', detail: content.resource?.uri };
+    }
+    if (content.type === 'resource_link') {
+      return { type: 'resource_link', label: 'Resource Link', detail: content.uri };
     }
     return { type: 'unknown', label: 'Unknown' };
   };
@@ -202,6 +206,38 @@ function ContentCard({ content, index, isError }: { content: McpContent; index: 
               {content.resource.blob && !content.resource.mimeType?.startsWith('image/') && !content.resource.mimeType?.startsWith('audio/') && (
                 <div className="text-sm text-neutral-600 dark:text-neutral-300">
                   Binary content ({Math.round(content.resource.blob.length * 0.75)} bytes)
+                </div>
+              )}
+            </div>
+          )}
+          {content.type === 'resource_link' && (
+            <div className="space-y-2">
+              {content.name && (
+                <div className="font-medium text-neutral-900 dark:text-white">
+                  {content.name}
+                </div>
+              )}
+              {content.description && (
+                <div className="text-sm text-neutral-600 dark:text-neutral-300">
+                  {content.description}
+                </div>
+              )}
+              {content.uri && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Link2 size={14} className="text-neutral-400 shrink-0" />
+                  <a 
+                    href={content.uri} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="font-mono text-blue-600 dark:text-blue-400 hover:underline break-all"
+                  >
+                    {content.uri}
+                  </a>
+                </div>
+              )}
+              {content.mimeType && (
+                <div className="text-xs text-neutral-500 dark:text-neutral-400 font-mono">
+                  {content.mimeType}
                 </div>
               )}
             </div>

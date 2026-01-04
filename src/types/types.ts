@@ -1,6 +1,6 @@
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
-export type Protocol = 'rest' | 'grpc' | 'mcp';
+export type Protocol = 'rest' | 'grpc' | 'mcp' | 'openai';
 
 // MCP types
 export type McpOperationType = 'discover' | 'tool' | 'resource';
@@ -23,7 +23,7 @@ export interface McpCallToolRequest {
 }
 
 export interface McpContent {
-  type: 'text' | 'image' | 'audio' | 'resource';
+  type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link';
   text?: string;
   data?: string; // base64 encoded for image/audio
   mimeType?: string;
@@ -34,6 +34,10 @@ export interface McpContent {
     blob?: string;
     mimeType?: string;
   };
+  // For resource_link type
+  uri?: string;
+  name?: string;
+  description?: string;
 }
 
 export interface McpCallToolResponse {
@@ -145,12 +149,96 @@ export interface McpRequestData {
   tool?: {
     name: string;
     arguments: string; // JSON parameters
+    schema?: Record<string, unknown>; // Tool input schema for fill button
   };
   resource?: {
     uri: string;
   };
   response?: {
     result?: McpCallToolResponse | McpReadResourceResponse;
+    duration: number;
+    error?: string;
+  };
+}
+
+// OpenAI types
+export type OpenAIBodyType = 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings';
+
+export interface OpenAITextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface OpenAIFileContent {
+  type: 'file';
+  data: string; // data URL
+  name?: string; // optional filename
+}
+
+export type OpenAIChatContent = OpenAITextContent | OpenAIFileContent;
+
+export interface OpenAIChatInput {
+  id: string;
+  role: 'system' | 'user' | 'assistant';
+  content: OpenAIChatContent[];
+}
+
+export interface OpenAITextOutput {
+  type: 'text';
+  text: string;
+}
+
+export interface OpenAIImageOutput {
+  type: 'image';
+  image: string;
+}
+
+export interface OpenAIAudioOutput {
+  type: 'audio';
+  audio: string; // base64 encoded audio data
+}
+
+export interface OpenAITranscriptionOutput {
+  type: 'transcription';
+  text: string;
+}
+
+export interface OpenAIEmbeddingsOutput {
+  type: 'embeddings';
+  embeddings: number[][];
+}
+
+export interface OpenAIImageFile {
+  id: string;
+  data: string; // data URL (data:image/...;base64,...)
+}
+
+export interface OpenAIEmbeddingsInput {
+  id: string;
+  text: string;
+}
+
+export interface OpenAIRequestData {
+  model: string;
+  chat?: {
+    input: OpenAIChatInput[];
+  };
+  image?: {
+    prompt: string;
+    images?: OpenAIImageFile[];
+  };
+  audio?: {
+    text: string;
+    voice?: string;
+  };
+  transcription?: {
+    file: string; // data URL (data:audio/...;base64,...)
+  };
+  embeddings?: {
+    input: OpenAIEmbeddingsInput[];
+  };
+  response?: {
+    result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput | OpenAIEmbeddingsOutput;
     duration: number;
     error?: string;
   };
@@ -165,9 +253,9 @@ export interface Request {
   variables: Variable[];
   creationTime: number;
   executionTime: number | null;
-  executing: boolean;
   // Protocol-specific data (one populated based on protocol)
   http?: HttpRequestData;
   grpc?: GrpcRequestData;
   mcp?: McpRequestData;
+  openai?: OpenAIRequestData;
 }
