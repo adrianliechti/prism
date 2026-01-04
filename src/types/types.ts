@@ -162,7 +162,7 @@ export interface McpRequestData {
 }
 
 // OpenAI types
-export type OpenAIBodyType = 'chat' | 'image';
+export type OpenAIBodyType = 'chat' | 'image' | 'audio' | 'transcription';
 
 export interface OpenAITextContent {
   type: 'input_text';
@@ -198,6 +198,16 @@ export interface OpenAIImageOutput {
   image: string;
 }
 
+export interface OpenAIAudioOutput {
+  type: 'audio';
+  audio: string; // base64 encoded audio data
+}
+
+export interface OpenAITranscriptionOutput {
+  type: 'transcription';
+  text: string;
+}
+
 export interface OpenAIRequestData {
   model: string;
   chat?: {
@@ -206,8 +216,15 @@ export interface OpenAIRequestData {
   image?: {
     prompt: string;
   };
+  audio?: {
+    text: string;
+    voice?: string;
+  };
+  transcription?: {
+    file: string; // data URL (data:audio/...;base64,...)
+  };
   response?: {
-    result?: OpenAITextOutput | OpenAIImageOutput;
+    result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput;
     duration: number;
     error?: string;
   };

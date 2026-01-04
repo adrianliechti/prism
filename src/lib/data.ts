@@ -18,7 +18,9 @@ import type {
   HttpResponse,
   OpenAIChatInput,
   OpenAITextOutput,
-  OpenAIImageOutput
+  OpenAIImageOutput,
+  OpenAIAudioOutput,
+  OpenAITranscriptionOutput
 } from '../types/types';
 
 // Re-export types for consumers
@@ -110,8 +112,15 @@ interface OpenAISettings {
   image?: {
     prompt: string;    // Image generation prompt
   };
+  audio?: {
+    text: string;      // Text to convert to speech
+    voice?: string;
+  };
+  transcription?: {
+    file: string;      // Data URL (data:audio/...;base64,...)
+  };
   response?: {
-    result?: OpenAITextOutput | OpenAIImageOutput;
+    result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput;
     duration: number;
     error?: string;
   };
@@ -217,6 +226,8 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
         model: req.openai?.model ?? '',
         chat: req.openai?.chat,
         image: req.openai?.image,
+        audio: req.openai?.audio,
+        transcription: req.openai?.transcription,
         response: req.openai?.response,
       };
       break;
@@ -311,6 +322,8 @@ function deserializeRequest(serialized: SerializedRequest): Request {
       model: openai.model,
       chat: openai.chat,
       image: openai.image,
+      audio: openai.audio,
+      transcription: openai.transcription,
       response: openai.response,
     };
   } else if (serialized.http) {

@@ -32,6 +32,13 @@ export function OpenAIResponseViewer() {
     return result.image;
   }, [result]);
 
+  // Convert base64 audio to object URL
+  const audioUrl = useMemo(() => {
+    if (!result || result.type !== 'audio' || !result.audio) return null;
+    const blob = base64ToBlob(result.audio, 'audio/mpeg');
+    return URL.createObjectURL(blob);
+  }, [result]);
+
   if (!response) {
     return null;
   }
@@ -76,6 +83,61 @@ export function OpenAIResponseViewer() {
               className="max-w-full h-auto object-contain rounded-lg shadow-lg"
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Audio response
+  if (result.type === 'audio') {
+    if (!result.audio) {
+      return (
+        <div className="text-sm text-neutral-500 dark:text-neutral-400">
+          No audio data
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-full overflow-auto">
+        <div className="flex flex-col items-center justify-center p-4 space-y-4">
+          <div className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+            Generated Audio
+          </div>
+          {audioUrl && (
+            <audio
+              controls
+              src={audioUrl}
+              className="w-full max-w-md"
+              preload="auto"
+            >
+              Your browser does not support the audio element.
+            </audio>
+          )}
+          {audioUrl && (
+            <a
+              href={audioUrl}
+              download="generated-audio.mp3"
+              className="text-sm text-violet-600 dark:text-violet-400 hover:underline"
+            >
+              Download Audio
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Transcription response
+  if (result.type === 'transcription') {
+    return (
+      <div className="h-full overflow-auto">
+        <div className="prose prose-sm dark:prose-invert max-w-none prose-pre:bg-neutral-100 dark:prose-pre:bg-neutral-800 prose-pre:text-neutral-800 dark:prose-pre:text-neutral-200 prose-code:text-violet-600 dark:prose-code:text-violet-400 prose-code:before:content-none prose-code:after:content-none">
+          <div className="p-4">
+            <div className="text-sm text-neutral-800 dark:text-neutral-100 whitespace-pre-wrap">
+              {result.text}
+            </div>
+          </div>
         </div>
       </div>
     );

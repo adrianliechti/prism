@@ -27,11 +27,17 @@ export function SharedRequestActions() {
   const openaiModel = request?.openai?.model ?? '';
   const openaiChatInput = request?.openai?.chat?.input ?? [];
   const openaiImagePrompt = request?.openai?.image?.prompt ?? '';
+  const openaiAudioText = request?.openai?.audio?.text ?? '';
+  const openaiTranscriptionFile = request?.openai?.transcription?.file ?? '';
   
   // Check if OpenAI has valid input
   const openaiHasValidInput = request?.openai?.chat
     ? openaiChatInput.length > 0 && openaiChatInput.some(msg => msg.content.length > 0)
-    : openaiImagePrompt.trim().length > 0;
+    : request?.openai?.image
+      ? openaiImagePrompt.trim().length > 0
+      : request?.openai?.transcription
+        ? openaiTranscriptionFile.length > 0
+        : openaiAudioText.trim().length > 0;
 
   // Check if we can execute
   const canExecute = protocol === 'rest'

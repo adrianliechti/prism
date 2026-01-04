@@ -112,6 +112,9 @@ interface ClientContextType {
   setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
+  setOpenAIAudioText: (text: string) => void;
+  setOpenAIAudioVoice: (voice: string) => void;
+  setOpenAITranscriptionFile: (file: string) => void;
   
   // History actions
   loadFromHistory: (entry: Request) => void;
@@ -351,14 +354,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image') => {
+  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image' | 'audio' | 'transcription') => {
     setState(prev => {
       const currentOpenAI = prev.request.openai;
       const newOpenAI: OpenAIRequestData = {
         model: currentOpenAI?.model ?? '',
         ...(bodyType === 'chat' 
           ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'input_text', text: '' }] }] } }
-          : { image: currentOpenAI?.image ?? { prompt: '' } }
+          : bodyType === 'image'
+          ? { image: currentOpenAI?.image ?? { prompt: '' } }
+          : bodyType === 'audio'
+          ? { audio: currentOpenAI?.audio ?? { text: '', voice: 'alloy' } }
+          : { transcription: currentOpenAI?.transcription ?? { file: '' } }
         ),
       };
       return {
@@ -391,6 +398,42 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         openai: prev.request.openai
           ? { ...prev.request.openai, image: { prompt } }
           : { model: '', image: { prompt } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIAudioText = useCallback((text: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, audio: { ...prev.request.openai.audio, text } }
+          : { model: '', audio: { text, voice: 'alloy' } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIAudioVoice = useCallback((voice: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, audio: { text: prev.request.openai.audio?.text ?? '', voice } }
+          : { model: '', audio: { text: '', voice } },
+      },
+    }));
+  }, []);
+
+  const setOpenAITranscriptionFile = useCallback((file: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, transcription: { file } }
+          : { model: '', transcription: { file } },
       },
     }));
   }, []);
@@ -722,7 +765,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             }
           }
           openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
-        } else {
+        } else if (req.openai?.image) {
           // Image generation via /v1/images/generations
           const prompt = req.openai?.image?.prompt ?? '';
           if (!prompt) {
@@ -747,6 +790,85 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             result: { type: 'image', image },
             duration: Math.round(performance.now() - startTime) 
           };
+        } else if (req.openai?.audio) {
+          // Audio/TTS generation via /v1/audio/speech
+          const text = req.openai?.audio?.text ?? '';
+          const voice = req.openai?.audio?.voice ?? 'alloy';
+          if (!text) {
+            throw new Error('Please enter text to convert to speech');
+          }
+
+          const response = await fetch(`${baseUrl}/v1/audio/speech`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, input: text, voice }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
+          // Get the audio data as a blob and convert to base64
+          const audioBlob = await response.blob();
+          const reader = new FileReader();
+          const audioBase64 = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              // Remove the data URL prefix (e.g., "data:audio/mpeg;base64,")
+              const base64 = result.split(',')[1] || '';
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(audioBlob);
+          });
+
+          openaiResponse = { 
+            result: { type: 'audio', audio: audioBase64 },
+            duration: Math.round(performance.now() - startTime) 
+          };
+        } else if (req.openai?.transcription) {
+          // Audio transcription via /v1/audio/transcriptions
+          const dataUrl = req.openai?.transcription?.file ?? '';
+          if (!dataUrl) {
+            throw new Error('Please select an audio file to transcribe');
+          }
+
+          // Extract base64 and MIME type from data URL (data:audio/...;base64,...)
+          const [mimeTypePart, base64] = dataUrl.split(',');
+          const mimeType = mimeTypePart?.split(':')[1]?.split(';')[0] || 'audio/mpeg';
+          const extension = mimeType.split('/')[1] || 'mp3';
+          const audioData = atob(base64 || '');
+          const audioArray = new Uint8Array(audioData.length);
+          for (let i = 0; i < audioData.length; i++) {
+            audioArray[i] = audioData.charCodeAt(i);
+          }
+          const audioBlob = new Blob([audioArray], { type: mimeType });
+
+          // Create FormData
+          const formData = new FormData();
+          formData.append('file', audioBlob, `audio.${extension}`);
+          formData.append('model', model);
+
+          const response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+          const transcriptionText = data.text || '';
+          
+          openaiResponse = { 
+            result: { type: 'transcription', text: transcriptionText },
+            duration: Math.round(performance.now() - startTime) 
+          };
+        } else {
+          throw new Error('Invalid OpenAI request type');
         }
 
         const executionTime = Date.now();
@@ -1165,6 +1287,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,
+    setOpenAIAudioText,
+    setOpenAIAudioVoice,
+    setOpenAITranscriptionFile,
     loadFromHistory,
     clearHistory,
     deleteHistoryEntry,
