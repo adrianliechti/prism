@@ -17,6 +17,8 @@ import type {
   HttpRequest,
   HttpResponse,
   OpenAIChatInput,
+  OpenAIEmbeddingsInput,
+  OpenAIImageFile,
   OpenAITextOutput,
   OpenAIImageOutput,
   OpenAIAudioOutput,
@@ -111,7 +113,8 @@ interface OpenAISettings {
     input: OpenAIChatInput[];
   };
   image?: {
-    prompt: string;    // Image generation prompt
+    prompt: string;    // Image generation or edit prompt
+    images?: OpenAIImageFile[]; // Images for edit mode
   };
   audio?: {
     text: string;      // Text to convert to speech
@@ -121,7 +124,7 @@ interface OpenAISettings {
     file: string;      // Data URL (data:audio/...;base64,...)
   };
   embeddings?: {
-    text: string;      // Text to convert to embeddings
+    input: OpenAIEmbeddingsInput[];
   };
   response?: {
     result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput | OpenAIEmbeddingsOutput;
@@ -298,7 +301,6 @@ function deserializeRequest(serialized: SerializedRequest): Request {
     variables: serialized.variables ?? [],
     creationTime: serialized.creationTime,
     executionTime: serialized.executionTime,
-    executing: false,
   };
 
   if (serialized.grpc) {

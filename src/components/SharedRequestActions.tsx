@@ -4,10 +4,10 @@ import { Sparkles } from 'lucide-react';
 import { getConfig } from '../config';
 
 export function SharedRequestActions() {
-  const { request, executeRequest, aiPanelOpen, toggleAiPanel } = useClient();
+  const { request, isExecuting, executeRequest, aiPanelOpen, toggleAiPanel } = useClient();
 
   const hasAiModel = Boolean(getConfig().ai?.model);
-  const isLoading = request?.executing ?? false;
+  const isLoading = isExecuting;
   const protocol = request?.protocol ?? 'rest';
   const url = request?.url ?? '';
 
@@ -26,10 +26,11 @@ export function SharedRequestActions() {
 
   const openaiModel = request?.openai?.model ?? '';
   const openaiChatInput = request?.openai?.chat?.input ?? [];
-  const openaiImagePrompt = request?.openai?.image?.prompt ?? '';
+  const openaiImage = request?.openai?.image;
+  const openaiImagePrompt = openaiImage?.prompt ?? '';
   const openaiAudioText = request?.openai?.audio?.text ?? '';
   const openaiTranscriptionFile = request?.openai?.transcription?.file ?? '';
-  const openaiEmbeddingsText = request?.openai?.embeddings?.text ?? '';
+  const openaiEmbeddingsInput = request?.openai?.embeddings?.input ?? [];
   
   // Check if OpenAI has valid input
   const openaiHasValidInput = request?.openai?.chat
@@ -39,7 +40,7 @@ export function SharedRequestActions() {
       : request?.openai?.transcription
         ? openaiTranscriptionFile.length > 0
         : request?.openai?.embeddings
-          ? openaiEmbeddingsText.trim().length > 0
+          ? openaiEmbeddingsInput.some(item => item.text.trim().length > 0)
           : openaiAudioText.trim().length > 0;
 
   // Check if we can execute

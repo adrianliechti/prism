@@ -147,13 +147,17 @@ export function OpenAIResponseViewer() {
   if (result.type === 'embeddings') {
     return (
       <div className="h-full overflow-auto">
-        <div className="p-4 space-y-2">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            {result.embeddings.length} dimensions
-          </div>
-          <pre className="text-xs overflow-auto text-neutral-800 dark:text-neutral-200">
-            {JSON.stringify(result.embeddings, null, 2)}
-          </pre>
+        <div className="p-4 space-y-3">
+          {result.embeddings.map((embedding, index) => (
+            <div key={index} className="space-y-1">
+              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                Input {index + 1}: {embedding.length} dimensions
+              </div>
+              <pre className="text-xs overflow-auto text-neutral-800 dark:text-neutral-200">
+                {JSON.stringify(embedding, null, 2)}
+              </pre>
+            </div>
+          ))}
         </div>
       </div>
     );

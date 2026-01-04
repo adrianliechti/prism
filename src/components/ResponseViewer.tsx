@@ -37,11 +37,11 @@ function StatusBadge({ statusCode, status }: { statusCode: number; status: strin
 }
 
 export function ResponseViewer() {
-  const { request } = useClient();
+  const { request, isExecuting } = useClient();
   const [viewMode, setViewMode] = useState<'pretty' | 'raw'>('pretty');
   const [showHeaders, setShowHeaders] = useState(false);
 
-  const isLoading = request?.executing ?? false;
+  const isLoading = isExecuting;
   const protocol = request?.protocol ?? 'rest';
   
   // Protocol-specific responses

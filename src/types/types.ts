@@ -165,22 +165,17 @@ export interface McpRequestData {
 export type OpenAIBodyType = 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings';
 
 export interface OpenAITextContent {
-  type: 'input_text';
+  type: 'text';
   text: string;
 }
 
-export interface OpenAIImageContent {
-  type: 'input_image';
-  image_url: string;
-}
-
 export interface OpenAIFileContent {
-  type: 'input_file';
-  file_data: string; // base64 encoded
-  filename: string;
+  type: 'file';
+  data: string; // data URL
+  name?: string; // optional filename
 }
 
-export type OpenAIChatContent = OpenAITextContent | OpenAIImageContent | OpenAIFileContent;
+export type OpenAIChatContent = OpenAITextContent | OpenAIFileContent;
 
 export interface OpenAIChatInput {
   id: string;
@@ -210,7 +205,17 @@ export interface OpenAITranscriptionOutput {
 
 export interface OpenAIEmbeddingsOutput {
   type: 'embeddings';
-  embeddings: number[];
+  embeddings: number[][];
+}
+
+export interface OpenAIImageFile {
+  id: string;
+  data: string; // data URL (data:image/...;base64,...)
+}
+
+export interface OpenAIEmbeddingsInput {
+  id: string;
+  text: string;
 }
 
 export interface OpenAIRequestData {
@@ -220,6 +225,7 @@ export interface OpenAIRequestData {
   };
   image?: {
     prompt: string;
+    images?: OpenAIImageFile[];
   };
   audio?: {
     text: string;
@@ -229,7 +235,7 @@ export interface OpenAIRequestData {
     file: string; // data URL (data:audio/...;base64,...)
   };
   embeddings?: {
-    text: string;
+    input: OpenAIEmbeddingsInput[];
   };
   response?: {
     result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput | OpenAIEmbeddingsOutput;
@@ -247,7 +253,6 @@ export interface Request {
   variables: Variable[];
   creationTime: number;
   executionTime: number | null;
-  executing: boolean;
   // Protocol-specific data (one populated based on protocol)
   http?: HttpRequestData;
   grpc?: GrpcRequestData;

@@ -1,5 +1,7 @@
 import { useClient } from '../../context/useClient';
 import { OpenAIChatEditor } from './OpenAIChatEditor';
+import { OpenAIEmbeddingsEditor } from './OpenAIEmbeddingsEditor';
+import { OpenAIImageEditor } from './OpenAIImageEditor';
 import type { OpenAIBodyType } from '../../types/types';
 
 type Tab = 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings';
@@ -11,8 +13,7 @@ export function OpenAIRequestPanel() {
     setOpenAIImagePrompt,
     setOpenAIAudioText,
     setOpenAIAudioVoice,
-    setOpenAITranscriptionFile,
-    setOpenAIEmbeddingsText
+    setOpenAITranscriptionFile
   } = useClient();
   
   const isChat = !!request?.openai?.chat;
@@ -24,7 +25,6 @@ export function OpenAIRequestPanel() {
   const audioText = request?.openai?.audio?.text ?? '';
   const audioVoice = request?.openai?.audio?.voice ?? 'alloy';
   const transcriptionFile = request?.openai?.transcription?.file ?? '';
-  const embeddingsText = request?.openai?.embeddings?.text ?? '';
 
   const tabs = [
     { id: 'chat' as Tab, label: 'Chat' },
@@ -58,6 +58,27 @@ export function OpenAIRequestPanel() {
             </button>
           ))}
         </div>
+        {bodyType === 'audio' && (
+          <select
+            value={audioVoice}
+            onChange={(e) => setOpenAIAudioVoice(e.target.value)}
+            className="h-6 px-2 text-[11px] font-medium bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 rounded-md shadow-sm border-0 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-white/20 cursor-pointer transition-all min-w-30"
+          >
+            <option value="alloy">Alloy</option>
+            <option value="ash">Ash</option>
+            <option value="ballad">Ballad</option>
+            <option value="coral">Coral</option>
+            <option value="echo">Echo</option>
+            <option value="fable">Fable</option>
+            <option value="onyx">Onyx</option>
+            <option value="nova">Nova</option>
+            <option value="sage">Sage</option>
+            <option value="shimmer">Shimmer</option>
+            <option value="verse">Verse</option>
+            <option value="marin">Marin</option>
+            <option value="cedar">Cedar</option>
+          </select>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -67,71 +88,32 @@ export function OpenAIRequestPanel() {
         )}
 
         {bodyType === 'image' && (
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              Prompt
-            </label>
+          <div className="space-y-3">
             <textarea
               value={imagePrompt}
               onChange={(e) => setOpenAIImagePrompt(e.target.value)}
-              placeholder="Describe the image you want to generate..."
+              placeholder="Describe the image..."
               rows={4}
               className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
             />
+            <OpenAIImageEditor />
           </div>
         )}
 
         {bodyType === 'audio' && (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                Text to convert to speech
-              </label>
-              <textarea
-                value={audioText}
-                onChange={(e) => setOpenAIAudioText(e.target.value)}
-                placeholder="Enter text to convert to speech..."
-                rows={4}
-                className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                Voice
-              </label>
-              <select
-                value={audioVoice}
-                onChange={(e) => setOpenAIAudioVoice(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 text-neutral-800 dark:text-neutral-100"
-              >
-                <option value="alloy">Alloy</option>
-                <option value="ash">Ash</option>
-                <option value="ballad">Ballad</option>
-                <option value="coral">Coral</option>
-                <option value="echo">Echo</option>
-                <option value="fable">Fable</option>
-                <option value="onyx">Onyx</option>
-                <option value="nova">Nova</option>
-                <option value="sage">Sage</option>
-                <option value="shimmer">Shimmer</option>
-                <option value="verse">Verse</option>
-                <option value="marin">Marin</option>
-                <option value="cedar">Cedar</option>
-              </select>
-            </div>
-          </div>
+          <textarea
+            value={audioText}
+            onChange={(e) => setOpenAIAudioText(e.target.value)}
+            placeholder="Enter text to convert to speech..."
+            rows={4}
+            className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
+          />
         )}
 
         {bodyType === 'transcription' && (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                Audio File
-              </label>
-              <div className="flex flex-col gap-2">
-                {transcriptionFile ? (
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg">
+          <div>
+            {transcriptionFile ? (
+              <div className="flex items-center gap-2 px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg">
                     <div className="flex-1 text-neutral-700 dark:text-neutral-300">
                       <svg className="w-4 h-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
@@ -164,24 +146,11 @@ export function OpenAIRequestPanel() {
                     className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 text-neutral-800 dark:text-neutral-100 file:mr-4 file:py-1 file:px-2 file:rounded file:border-0 file:text-sm file:bg-violet-50 dark:file:bg-violet-500/10 file:text-violet-600 dark:file:text-violet-400 hover:file:bg-violet-100 dark:hover:file:bg-violet-500/20"
                   />
                 )}
-              </div>
-            </div>
           </div>
         )}
 
         {bodyType === 'embeddings' && (
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              Text
-            </label>
-            <textarea
-              value={embeddingsText}
-              onChange={(e) => setOpenAIEmbeddingsText(e.target.value)}
-              placeholder="Enter text to convert to embeddings..."
-              rows={4}
-              className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
-            />
-          </div>
+          <OpenAIEmbeddingsEditor />
         )}
       </div>
     </div>

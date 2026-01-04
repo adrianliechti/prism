@@ -15,7 +15,7 @@ import {
   type McpCallToolResponse,
   type McpReadResourceResponse,
 } from '../lib/data';
-import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIBodyType, OpenAIRequestData } from '../types/types';
+import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIBodyType, OpenAIRequestData, OpenAIImageFile } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 
 function createEmptyKeyValue(): KeyValuePair {
@@ -31,7 +31,6 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
     variables: [],
     creationTime: Date.now(),
     executionTime: null,
-    executing: false,
   };
 
   switch (protocol) {
@@ -50,7 +49,7 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
       base.openai = {
         model: '',
         chat: {
-          input: [{ id: generateId(), role: 'user', content: [{ type: 'input_text', text: '' }] }],
+          input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }],
         },
       };
       break;
@@ -72,6 +71,7 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
 
 interface ClientState {
   request: Request;
+  isExecuting: boolean;
   sidebarCollapsed: boolean;
   aiPanelOpen: boolean;
 }
@@ -79,6 +79,7 @@ interface ClientState {
 interface ClientContextType {
   // State
   request: Request;
+  isExecuting: boolean;
   history: Request[];
   sidebarCollapsed: boolean;
   
@@ -112,10 +113,11 @@ interface ClientContextType {
   setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
+  setOpenAIImageFiles: (images: OpenAIImageFile[]) => void;
   setOpenAIAudioText: (text: string) => void;
   setOpenAIAudioVoice: (voice: string) => void;
   setOpenAITranscriptionFile: (file: string) => void;
-  setOpenAIEmbeddingsText: (text: string) => void;
+  setOpenAIEmbeddingsInput: (input: OpenAIEmbeddingsInput[]) => void;
   
   // History actions
   loadFromHistory: (entry: Request) => void;
@@ -134,6 +136,7 @@ export const ClientContext = createContext<ClientContextType | null>(null);
 
 const initialState: ClientState = {
   request: createNewRequest(),
+  isExecuting: false,
   sidebarCollapsed: false,
   aiPanelOpen: false,
 };
@@ -164,6 +167,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const cleanSuffix = suffix.replace(/^\//, '');
       const base = `/proxy/mcp/${scheme}/${host}/${cleanSuffix}`;
       return path ? `${base}?path=${encodeURIComponent(path)}` : base;
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const buildOpenAIProxyPath = useCallback((baseUrl: string, endpoint: string) => {
+    try {
+      const url = new URL(baseUrl);
+      const scheme = url.protocol.replace(/:$/, '');
+      const host = url.host;
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return `/proxy/${scheme}/${host}/${cleanEndpoint}`;
     } catch {
       return '';
     }
@@ -361,14 +376,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const newOpenAI: OpenAIRequestData = {
         model: currentOpenAI?.model ?? '',
         ...(bodyType === 'chat' 
-          ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'input_text', text: '' }] }] } }
+          ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }] } }
           : bodyType === 'image'
-          ? { image: currentOpenAI?.image ?? { prompt: '' } }
+          ? { image: currentOpenAI?.image ?? { prompt: '', images: [{ id: generateId(), data: '' }] } }
           : bodyType === 'audio'
           ? { audio: currentOpenAI?.audio ?? { text: '', voice: 'alloy' } }
           : bodyType === 'transcription'
           ? { transcription: currentOpenAI?.transcription ?? { file: '' } }
-          : { embeddings: currentOpenAI?.embeddings ?? { text: '' } }
+          : { embeddings: currentOpenAI?.embeddings ?? { input: [{ id: generateId(), text: '' }] } }
         ),
       };
       return {
@@ -399,8 +414,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       request: {
         ...prev.request,
         openai: prev.request.openai
-          ? { ...prev.request.openai, image: { prompt } }
+          ? { ...prev.request.openai, image: { ...prev.request.openai.image, prompt } }
           : { model: '', image: { prompt } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIImageFiles = useCallback((images: OpenAIImageFile[]) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, image: { prompt: prev.request.openai.image?.prompt ?? '', images } }
+          : { model: '', image: { prompt: '', images } },
       },
     }));
   }, []);
@@ -441,14 +468,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const setOpenAIEmbeddingsText = useCallback((text: string) => {
+  const setOpenAIEmbeddingsInput = useCallback((input: OpenAIEmbeddingsInput[]) => {
     setState(prev => ({
       ...prev,
       request: {
         ...prev.request,
         openai: prev.request.openai
-          ? { ...prev.request.openai, embeddings: { text } }
-          : { model: '', embeddings: { text } },
+          ? { ...prev.request.openai, embeddings: { input } }
+          : { model: '', embeddings: { input } },
       },
     }));
   }, []);
@@ -458,7 +485,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const req = state.request;
     if (!req.url) return null;
 
-    updateRequest({ executing: true });
+    setState(prev => ({ ...prev, isExecuting: true }));
 
     try {
       const path = buildMcpProxyPath(req.url, 'features');
@@ -484,11 +511,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
       const features: McpListFeaturesResponse = await response.json();
-      updateRequest({ executing: false });
+      setState(prev => ({ ...prev, isExecuting: false }));
       return features;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      updateRequest({ executing: false });
+      setState(prev => ({ ...prev, isExecuting: false }));
       return { tools: [], resources: [], error: errorMessage };
     }
   }, [state.request, updateRequest, buildMcpProxyPath]);
@@ -536,7 +563,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const executeRequest = useCallback(async () => {
     const req = state.request;
 
-    updateRequest({ executing: true });
+    setState(prev => ({ ...prev, isExecuting: true }));
 
     try {
       // gRPC mode
@@ -580,7 +607,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           grpc: {
             ...req.grpc,
             body: grpcBody,
@@ -607,6 +634,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         setState(prev => ({
           ...prev,
           request: updatedRequest,
+          isExecuting: false,
         }));
 
         return;
@@ -693,7 +721,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           mcp: {
             ...req.mcp,
             response: {
@@ -716,6 +744,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         setState(prev => ({
           ...prev,
           request: updatedRequest,
+          isExecuting: false,
         }));
 
         return;
@@ -743,17 +772,21 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             role: msg.role,
             content: msg.content.map(c => {
               switch (c.type) {
-                case 'input_text':
+                case 'text':
                   return { type: 'input_text', text: c.text };
-                case 'input_image':
-                  return { type: 'input_image', image_url: c.image_url };
-                case 'input_file':
-                  return { type: 'input_file', filename: c.filename, file_data: c.file_data };
+                case 'file':
+                  // Determine if it's an image or regular file based on data URL
+                  if (c.data.startsWith('data:image/')) {
+                    return { type: 'input_image', image_url: c.data };
+                  } else {
+                    return { type: 'input_file', filename: c.name || 'file', file_data: c.data };
+                  }
               }
             }),
           }));
 
-          const response = await fetch(`${baseUrl}/v1/responses`, {
+          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/responses');
+          const response = await fetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model, input }),
@@ -781,30 +814,82 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           }
           openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
         } else if (req.openai?.image) {
-          // Image generation via /v1/images/generations
-          const prompt = req.openai?.image?.prompt ?? '';
+          const prompt = req.openai.image.prompt ?? '';
+          const images = req.openai.image.images ?? [];
+          const validImages = images.filter(img => img.data.length > 0);
+          const isEditMode = validImages.length > 0;
+          
           if (!prompt) {
             throw new Error('Please enter an image prompt');
           }
+          
+          if (isEditMode) {
+            // Image editing via /v1/images/edits
+            if (validImages.length === 0) {
+              throw new Error('Please upload at least one image');
+            }
 
-          const response = await fetch(`${baseUrl}/v1/images/generations`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, prompt, response_format: 'b64_json' }),
-          });
+            const formData = new FormData();
+            formData.append('model', model);
+            formData.append('prompt', prompt);
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
+            // Add all images with image[] field name
+            for (const img of validImages) {
+              // Convert data URL to blob
+              const dataUrlMatch = img.data.match(/^data:([^;]+);base64,(.+)$/);
+              if (dataUrlMatch) {
+                const mimeType = dataUrlMatch[1];
+                const base64 = dataUrlMatch[2];
+                const binary = atob(base64);
+                const array = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                  array[i] = binary.charCodeAt(i);
+                }
+                const blob = new Blob([array], { type: mimeType });
+                formData.append('image[]', blob, 'image.png');
+              }
+            }
+
+            const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/edits');
+            const response = await fetch(proxyUrl, {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(errorText || `HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
+            const image = img?.b64_json || img?.url || '';
+            openaiResponse = { 
+              result: { type: 'image', image },
+              duration: Math.round(performance.now() - startTime) 
+            };
+          } else {
+            // Image generation via /v1/images/generations
+            const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/generations');
+            const response = await fetch(proxyUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model, prompt, response_format: 'b64_json' }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(errorText || `HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
+            const image = img?.b64_json || img?.url || '';
+            openaiResponse = { 
+              result: { type: 'image', image },
+              duration: Math.round(performance.now() - startTime) 
+            };
           }
-
-          const data = await response.json();
-          const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
-          const image = img?.b64_json || img?.url || '';
-          openaiResponse = { 
-            result: { type: 'image', image },
-            duration: Math.round(performance.now() - startTime) 
-          };
         } else if (req.openai?.audio) {
           // Audio/TTS generation via /v1/audio/speech
           const text = req.openai?.audio?.text ?? '';
@@ -813,7 +898,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             throw new Error('Please enter text to convert to speech');
           }
 
-          const response = await fetch(`${baseUrl}/v1/audio/speech`, {
+          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/speech');
+          const response = await fetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model, input: text, voice }),
@@ -865,7 +951,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           formData.append('file', audioBlob, `audio.${extension}`);
           formData.append('model', model);
 
-          const response = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/transcriptions');
+          const response = await fetch(proxyUrl, {
             method: 'POST',
             body: formData,
           });
@@ -884,15 +971,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           };
         } else if (req.openai?.embeddings) {
           // Embeddings generation via /v1/embeddings
-          const text = req.openai?.embeddings?.text ?? '';
-          if (!text) {
-            throw new Error('Please enter text to convert to embeddings');
+          const inputs = req.openai?.embeddings?.input ?? [];
+          const texts = inputs.filter(item => item.text.trim()).map(item => item.text);
+          
+          if (texts.length === 0) {
+            throw new Error('Please enter at least one text to convert to embeddings');
           }
 
-          const response = await fetch(`${baseUrl}/v1/embeddings`, {
+          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/embeddings');
+          const response = await fetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, input: text }),
+            body: JSON.stringify({ model, input: texts }),
           });
 
           if (!response.ok) {
@@ -901,7 +991,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           }
 
           const data = await response.json();
-          const embeddings = (data.data?.[0]?.embedding || []) as number[];
+          const embeddings = (data.data || []).map((item: { embedding: number[] }) => item.embedding);
           
           openaiResponse = { 
             result: { type: 'embeddings', embeddings },
@@ -915,7 +1005,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           openai: {
             ...req.openai!,
             response: openaiResponse,
@@ -935,6 +1025,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         setState(prev => ({
           ...prev,
           request: updatedRequest,
+          isExecuting: false,
         }));
 
         return;
@@ -1088,7 +1179,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const updatedRequest: Request = {
         ...req,
         executionTime,
-        executing: false,
+        
         http: {
           ...req.http!,
           request: clientRequest,
@@ -1109,6 +1200,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       setState(prev => ({
         ...prev,
         request: updatedRequest,
+          isExecuting: false,
       }));
       
     } catch (err) {
@@ -1120,7 +1212,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           grpc: {
             ...req.grpc!,
             response: {
@@ -1140,12 +1232,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           requestsCollection.insert(updatedRequest);
         }
 
-        setState(prev => ({ ...prev, request: updatedRequest }));
+        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
       } else if (req.protocol === 'mcp') {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           mcp: {
             headers: req.mcp?.headers ?? [],
             tool: req.mcp?.tool,
@@ -1167,7 +1259,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           requestsCollection.insert(updatedRequest);
         }
 
-        setState(prev => ({ ...prev, request: updatedRequest }));
+        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
       } else if (req.protocol === 'openai') {
         const isChat = !!req.openai?.chat;
         const errorResponse = isChat
@@ -1177,7 +1269,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           openai: {
             ...req.openai!,
             response: errorResponse,
@@ -1193,7 +1285,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           requestsCollection.insert(updatedRequest);
         }
 
-        setState(prev => ({ ...prev, request: updatedRequest }));
+        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
       } else {
         // HTTP error response
         const errorResponse = {
@@ -1208,7 +1300,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          executing: false,
+          
           http: {
             ...req.http!,
             response: errorResponse,
@@ -1224,10 +1316,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           requestsCollection.insert(updatedRequest);
         }
 
-        setState(prev => ({ ...prev, request: updatedRequest }));
+        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
       }
     }
-  }, [state.request, updateRequest, history, buildMcpProxyPath]);
+  }, [state.request, history, buildMcpProxyPath, buildOpenAIProxyPath]);
 
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
@@ -1301,6 +1393,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   const value: ClientContextType = {
     request: state.request,
+    isExecuting: state.isExecuting,
     history,
     sidebarCollapsed: state.sidebarCollapsed,
     aiPanelOpen: state.aiPanelOpen,
@@ -1327,10 +1420,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,
+    setOpenAIImageFiles,
     setOpenAIAudioText,
     setOpenAIAudioVoice,
     setOpenAITranscriptionFile,
-    setOpenAIEmbeddingsText,
+    setOpenAIEmbeddingsInput,
     loadFromHistory,
     clearHistory,
     deleteHistoryEntry,

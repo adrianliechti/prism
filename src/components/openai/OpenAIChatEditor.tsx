@@ -11,7 +11,7 @@ function createEmptyMessage(): OpenAIChatInput {
   return {
     id: generateId(),
     role: 'user',
-    content: [{ type: 'input_text', text: '' }],
+    content: [{ type: 'text', text: '' }],
   };
 }
 
@@ -19,12 +19,10 @@ function isMessageEmpty(message: OpenAIChatInput): boolean {
   if (message.content.length === 0) return true;
   const content = message.content[0];
   switch (content.type) {
-    case 'input_text':
+    case 'text':
       return !content.text;
-    case 'input_image':
-      return !content.image_url;
-    case 'input_file':
-      return !content.file_data;
+    case 'file':
+      return !content.data;
   }
 }
 
@@ -71,9 +69,9 @@ export function OpenAIChatEditor() {
       const base64 = dataUrl.split(',')[1];
       
       if (file.type.startsWith('image/')) {
-        updateContent(id, { type: 'input_image', image_url: dataUrl });
+        updateContent(id, { type: 'file', data: dataUrl });
       } else {
-        updateContent(id, { type: 'input_file', filename: file.name, file_data: base64 });
+        updateContent(id, { type: 'file', name: file.name, data: base64 });
       }
     };
     reader.readAsDataURL(file);
@@ -81,14 +79,11 @@ export function OpenAIChatEditor() {
 
   const handleTypeChange = (id: string, newType: OpenAIChatContent['type']) => {
     switch (newType) {
-      case 'input_text':
-        updateContent(id, { type: 'input_text', text: '' });
+      case 'text':
+        updateContent(id, { type: 'text', text: '' });
         break;
-      case 'input_image':
-        updateContent(id, { type: 'input_image', image_url: '' });
-        break;
-      case 'input_file':
-        updateContent(id, { type: 'input_file', filename: '', file_data: '' });
+      case 'file':
+        updateContent(id, { type: 'file', data: '' });
         break;
     }
   };
@@ -97,10 +92,8 @@ export function OpenAIChatEditor() {
     const msg = chatInput.find(m => m.id === id);
     if (!msg) return;
     const content = msg.content[0];
-    if (content.type === 'input_image') {
-      updateContent(id, { type: 'input_image', image_url: '' });
-    } else if (content.type === 'input_file') {
-      updateContent(id, { type: 'input_file', filename: '', file_data: '' });
+    if (content.type === 'file') {
+      updateContent(id, { type: 'file', data: '' });
     }
   };
 
@@ -108,50 +101,29 @@ export function OpenAIChatEditor() {
     const content = message.content[0];
     
     switch (content.type) {
-      case 'input_text':
+      case 'text':
         return (
           <input
             type="text"
             value={content.text}
-            onChange={(e) => updateContent(message.id, { type: 'input_text', text: e.target.value })}
+            onChange={(e) => updateContent(message.id, { type: 'text', text: e.target.value })}
             placeholder="Message content..."
             className="w-full px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded text-xs text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-white/20 transition-colors"
           />
         );
       
-      case 'input_image':
-        return content.image_url ? (
+      case 'file':
+        return content.data ? (
           <div className="flex items-center gap-2 px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded">
-            <img src={content.image_url} alt="Uploaded" className="w-5 h-5 object-cover rounded" />
-            <span className="text-xs text-neutral-600 dark:text-neutral-400 truncate flex-1">Image</span>
-            <button
-              type="button"
-              onClick={() => clearFile(message.id)}
-              className="p-0.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded transition-colors"
-            >
-              <X className="w-3 h-3 text-neutral-400" />
-            </button>
-          </div>
-        ) : (
-          <label className="flex items-center gap-2 px-2 py-1 bg-white dark:bg-white/5 border border-dashed border-neutral-300 dark:border-white/20 rounded cursor-pointer hover:bg-neutral-50 dark:hover:bg-white/10 transition-colors">
-            <Upload className="w-3.5 h-3.5 text-neutral-400" />
-            <span className="text-xs text-neutral-400">Upload image...</span>
-            <input
-              ref={(el) => { fileInputRefs.current[message.id] = el; }}
-              type="file"
-              accept="image/*"
-              onChange={(e) => handleFileSelect(message.id, e)}
-              className="hidden"
-            />
-          </label>
-        );
-      
-      case 'input_file':
-        return content.filename ? (
-          <div className="flex items-center gap-2 px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded">
-            <FileText className="w-3.5 h-3.5 text-violet-500 shrink-0" />
-            <span className="text-xs text-neutral-600 dark:text-neutral-400 truncate flex-1">{content.filename}</span>
-            <span className="text-[10px] text-neutral-400">({Math.round(content.file_data.length * 0.75 / 1024)}KB)</span>
+            {content.data.startsWith('data:image/') ? (
+              <img src={content.data} alt="Uploaded" className="w-5 h-5 object-cover rounded" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+            )}
+            <span className="text-xs text-neutral-600 dark:text-neutral-400 truncate flex-1">{content.name || (content.data.startsWith('data:image/') ? 'Image' : 'File')}</span>
+            {!content.data.startsWith('data:image/') && (
+              <span className="text-[10px] text-neutral-400">({Math.round(content.data.length * 0.75 / 1024)}KB)</span>
+            )}
             <button
               type="button"
               onClick={() => clearFile(message.id)}
@@ -167,7 +139,7 @@ export function OpenAIChatEditor() {
             <input
               ref={(el) => { fileInputRefs.current[message.id] = el; }}
               type="file"
-              accept=".pdf,.doc,.docx,.txt"
+              accept="image/*,.pdf,.doc,.docx,.txt"
               onChange={(e) => handleFileSelect(message.id, e)}
               className="hidden"
             />
@@ -198,13 +170,12 @@ export function OpenAIChatEditor() {
               {/* Type selector */}
               <td className="w-20 px-1.5 py-1.5">
                 <select
-                  value={message.content[0]?.type ?? 'input_text'}
+                  value={message.content[0]?.type ?? 'text'}
                   onChange={(e) => handleTypeChange(message.id, e.target.value as OpenAIChatContent['type'])}
                   className="w-full px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded text-xs text-neutral-700 dark:text-neutral-300 focus:outline-none focus:border-neutral-400 dark:focus:border-white/20 transition-colors"
                 >
-                  <option value="input_text">Text</option>
-                  <option value="input_image">Image</option>
-                  <option value="input_file">File</option>
+                  <option value="text">Text</option>
+                  <option value="file">File</option>
                 </select>
               </td>
               
