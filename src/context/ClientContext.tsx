@@ -837,34 +837,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
     const newReq = createNewRequest(entry.name, entry.protocol ?? 'rest');
-    // Preserve the original entry's ID so re-executing updates the history entry
+    // Preserve original IDs so everything matches
     newReq.id = entry.id;
     newReq.url = entry.url;
     newReq.executionTime = entry.executionTime;
-    // Clone variables with new IDs
-    newReq.variables = (entry.variables ?? []).map(v => ({ ...v, id: generateId() }));
+    newReq.variables = entry.variables ?? [];
     
-    // Restore protocol-specific fields
+    // Restore protocol-specific fields (keeping original IDs)
     if (entry.http) {
       newReq.http = {
         method: entry.http.method,
-        headers: entry.http.headers.map((h: KeyValuePair) => ({ ...h, id: generateId() })),
-        query: entry.http.query.map((p: KeyValuePair) => ({ ...p, id: generateId() })),
+        headers: [...entry.http.headers],
+        query: [...entry.http.query],
         body: entry.http.body,
         request: entry.http.request,
         response: entry.http.response,
       };
-      // Clone body with new IDs for form data
-      if (entry.http.body.type === 'form-urlencoded') {
-        newReq.http.body = {
-          type: 'form-urlencoded',
-          data: entry.http.body.data.map(f => ({ ...f, id: generateId() })),
-        };
-      } else if (entry.http.body.type === 'form-data') {
+      // Handle special body types
+      if (entry.http.body.type === 'form-data') {
+        // Note: File objects can't be serialized, so files will be lost
         newReq.http.body = {
           type: 'form-data',
-          // Note: File objects can't be serialized, so files will be lost
-          data: entry.http.body.data.map(f => ({ ...f, id: generateId(), file: null })),
+          data: entry.http.body.data.map(f => ({ ...f, file: null })),
         };
       } else if (entry.http.body.type === 'binary') {
         // Binary files can't be restored from history (can't serialize File objects)
@@ -872,12 +866,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
     }
     if (entry.grpc) {
-      newReq.grpc = {
-        body: entry.grpc.body,
-        metadata: (entry.grpc.metadata ?? []).map((m: KeyValuePair) => ({ ...m, id: generateId() })),
-        schema: entry.grpc.schema,
-        response: entry.grpc.response,
-      };
+      newReq.grpc = { ...entry.grpc };
     }
     if (entry.mcp) {
       newReq.mcp = { ...entry.mcp };
