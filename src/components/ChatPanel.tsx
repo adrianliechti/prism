@@ -40,7 +40,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
       }
     }
     readResponseBody();
-  }, [request.http?.response?.body]);
+  }, [request.http?.response, request.http?.response?.body]);
 
   // Create environment for tools
   const environment: RequestChatEnvironment = useMemo(() => ({

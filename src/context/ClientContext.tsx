@@ -15,7 +15,7 @@ import {
   type McpCallToolResponse,
   type McpReadResourceResponse,
 } from '../lib/data';
-import type { McpListFeaturesResponse } from '../types/types';
+import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIBodyType, OpenAIRequestData } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 
 function createEmptyKeyValue(): KeyValuePair {
@@ -44,6 +44,14 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
     case 'mcp':
       base.mcp = {
         headers: [createEmptyKeyValue()],
+      };
+      break;
+    case 'openai':
+      base.openai = {
+        model: '',
+        chat: {
+          input: [{ id: generateId(), role: 'user', content: [{ type: 'input_text', text: '' }] }],
+        },
       };
       break;
     case 'rest':
@@ -93,10 +101,17 @@ interface ClientContextType {
   setGrpcMethodSchema: (schema: Record<string, unknown> | undefined) => void;
   
   // MCP-specific actions
-  setMcpTool: (tool: { name: string; arguments: string } | undefined) => void;
+  setMcpTool: (tool: { name: string; arguments: string; schema?: Record<string, unknown> } | undefined) => void;
   setMcpResource: (resource: { uri: string } | undefined) => void;
   setMcpHeaders: (headers: KeyValuePair[]) => void;
   discoverMcpFeatures: () => Promise<McpListFeaturesResponse | null>;
+  
+  // OpenAI-specific actions
+  setOpenAIModel: (model: string) => void;
+  setOpenAIModels: (models: string[]) => void;
+  setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
+  setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
+  setOpenAIImagePrompt: (prompt: string) => void;
   
   // History actions
   loadFromHistory: (entry: Request) => void;
@@ -271,7 +286,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // MCP-specific setters
-  const setMcpTool = useCallback((tool: { name: string; arguments: string } | undefined) => {
+  const setMcpTool = useCallback((tool: { name: string; arguments: string; schema?: Record<string, unknown> } | undefined) => {
     setState(prev => ({
       ...prev,
       request: {
@@ -307,6 +322,75 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         mcp: prev.request.mcp
           ? { ...prev.request.mcp, headers }
           : { headers },
+      },
+    }));
+  }, []);
+
+  // OpenAI-specific setters
+  const setOpenAIModel = useCallback((model: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, model }
+          : { model, chat: { input: [] } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIModels = useCallback((models: string[]) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, models }
+          : { model: '', models, chat: { input: [] } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image') => {
+    setState(prev => {
+      const currentOpenAI = prev.request.openai;
+      const newOpenAI: OpenAIRequestData = {
+        model: currentOpenAI?.model ?? '',
+        ...(bodyType === 'chat' 
+          ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'input_text', text: '' }] }] } }
+          : { image: currentOpenAI?.image ?? { prompt: '' } }
+        ),
+      };
+      return {
+        ...prev,
+        request: {
+          ...prev.request,
+          openai: newOpenAI,
+        },
+      };
+    });
+  }, []);
+
+  const setOpenAIChatInput = useCallback((input: OpenAIChatInput[]) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, chat: { input } }
+          : { model: '', chat: { input } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIImagePrompt = useCallback((prompt: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, image: { prompt } }
+          : { model: '', image: { prompt } },
       },
     }));
   }, []);
@@ -368,6 +452,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           request: {
             ...prev.request,
             mcp: { ...prev.request.mcp, response: undefined },
+          },
+        };
+      } else if (protocol === 'openai' && prev.request.openai) {
+        return {
+          ...prev,
+          request: {
+            ...prev.request,
+            openai: { ...prev.request.openai, response: undefined },
           },
         };
       } else if (prev.request.http) {
@@ -550,6 +642,121 @@ export function ClientProvider({ children }: { children: ReactNode }) {
               result: mcpResult,
               duration,
             },
+          },
+        };
+
+        // Save to collection
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
+
+        setState(prev => ({
+          ...prev,
+          request: updatedRequest,
+        }));
+
+        return;
+      }
+
+      // OpenAI mode
+      if (req.protocol === 'openai') {
+        const baseUrl = req.url.replace(/\/$/, '');
+        const model = req.openai?.model;
+        const isChat = !!req.openai?.chat;
+
+        if (!baseUrl) {
+          throw new Error('OpenAI API URL is required');
+        }
+        if (!model) {
+          throw new Error('Please select a model');
+        }
+
+        const startTime = performance.now();
+        let openaiResponse: OpenAIRequestData['response'];
+
+        if (isChat) {
+          // Build input messages for /v1/responses API
+          const input = (req.openai?.chat?.input ?? []).map(msg => ({
+            role: msg.role,
+            content: msg.content.map(c => {
+              switch (c.type) {
+                case 'input_text':
+                  return { type: 'input_text', text: c.text };
+                case 'input_image':
+                  return { type: 'input_image', image_url: c.image_url };
+                case 'input_file':
+                  return { type: 'input_file', filename: c.filename, file_data: c.file_data };
+              }
+            }),
+          }));
+
+          const response = await fetch(`${baseUrl}/v1/responses`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, input }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+          // Extract the output text from the response
+          // The response format has output array with items
+          let chatOutput = '';
+          if (data.output && Array.isArray(data.output)) {
+            for (const item of data.output) {
+              if (item.type === 'message' && item.content) {
+                for (const content of item.content) {
+                  if (content.type === 'output_text') {
+                    chatOutput += content.text;
+                  }
+                }
+              }
+            }
+          }
+          openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
+        } else {
+          // Image generation via /v1/images/generations
+          const prompt = req.openai?.image?.prompt ?? '';
+          if (!prompt) {
+            throw new Error('Please enter an image prompt');
+          }
+
+          const response = await fetch(`${baseUrl}/v1/images/generations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt, response_format: 'b64_json' }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+          const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
+          const image = img?.b64_json || img?.url || '';
+          openaiResponse = { 
+            result: { type: 'image', image },
+            duration: Math.round(performance.now() - startTime) 
+          };
+        }
+
+        const executionTime = Date.now();
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          executing: false,
+          openai: {
+            ...req.openai!,
+            response: openaiResponse,
           },
         };
 
@@ -799,6 +1006,32 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
 
         setState(prev => ({ ...prev, request: updatedRequest }));
+      } else if (req.protocol === 'openai') {
+        const isChat = !!req.openai?.chat;
+        const errorResponse = isChat
+          ? { result: { type: 'text' as const, text: '' }, duration: 0, error: errorMessage }
+          : { result: { type: 'image' as const, image: '' }, duration: 0, error: errorMessage };
+        
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          executing: false,
+          openai: {
+            ...req.openai!,
+            response: errorResponse,
+          },
+        };
+        
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
+
+        setState(prev => ({ ...prev, request: updatedRequest }));
       } else {
         // HTTP error response
         const errorResponse = {
@@ -871,6 +1104,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     if (entry.mcp) {
       newReq.mcp = { ...entry.mcp };
     }
+    if (entry.openai) {
+      newReq.openai = { ...entry.openai };
+    }
     
     setState(prev => ({
       ...prev,
@@ -924,6 +1160,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setMcpResource,
     setMcpHeaders,
     discoverMcpFeatures,
+    setOpenAIModel,
+    setOpenAIModels,
+    setOpenAIBodyType,
+    setOpenAIChatInput,
+    setOpenAIImagePrompt,
     loadFromHistory,
     clearHistory,
     deleteHistoryEntry,

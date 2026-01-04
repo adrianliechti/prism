@@ -13,8 +13,12 @@ import type {
   HttpRequestData,
   GrpcRequestData,
   McpRequestData,
+  OpenAIRequestData,
   HttpRequest,
   HttpResponse,
+  OpenAIChatInput,
+  OpenAITextOutput,
+  OpenAIImageOutput
 } from '../types/types';
 
 // Re-export types for consumers
@@ -32,6 +36,7 @@ export type {
   HttpRequestData,
   GrpcRequestData,
   McpRequestData,
+  OpenAIRequestData,
 };
 
 // Shared utility for generating unique IDs
@@ -83,12 +88,30 @@ interface McpSettings {
   tool?: {
     name: string;
     arguments: string; // JSON parameters
+    schema?: Record<string, unknown>; // Tool input schema for fill button
   };
   resource?: {
     uri: string;
   };
   response?: {
     result?: McpCallToolResponse | McpReadResourceResponse;
+    duration: number;
+    error?: string;
+  };
+}
+
+// OpenAI-specific settings
+interface OpenAISettings {
+  url: string;         // OpenAI API URL
+  model: string;       // Selected model
+  chat?: {
+    input: OpenAIChatInput[];
+  };
+  image?: {
+    prompt: string;    // Image generation prompt
+  };
+  response?: {
+    result?: OpenAITextOutput | OpenAIImageOutput;
     duration: number;
     error?: string;
   };
@@ -104,6 +127,7 @@ interface SerializedRequest {
   http?: HttpSettings;
   grpc?: GrpcSettings;
   mcp?: McpSettings;
+  openai?: OpenAISettings;
 }
 
 // ============================================================================
@@ -187,6 +211,16 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
       };
       break;
     }
+    case 'openai': {
+      base.openai = {
+        url: req.url,
+        model: req.openai?.model ?? '',
+        chat: req.openai?.chat,
+        image: req.openai?.image,
+        response: req.openai?.response,
+      };
+      break;
+    }
     case 'rest':
     default: {
       // Handle body serialization - strip File objects
@@ -238,7 +272,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
 
 function deserializeRequest(serialized: SerializedRequest): Request {
   // Infer protocol from which settings object is present
-  const protocol: Protocol = serialized.grpc ? 'grpc' : serialized.mcp ? 'mcp' : 'rest';
+  const protocol: Protocol = serialized.grpc ? 'grpc' : serialized.mcp ? 'mcp' : serialized.openai ? 'openai' : 'rest';
 
   const base: Request = {
     id: serialized.id,
@@ -268,6 +302,16 @@ function deserializeRequest(serialized: SerializedRequest): Request {
       tool: mcp.tool,
       resource: mcp.resource,
       response: mcp.response,
+    };
+  } else if (serialized.openai) {
+    const openai = serialized.openai;
+    base.url = openai.url;
+    
+    base.openai = {
+      model: openai.model,
+      chat: openai.chat,
+      image: openai.image,
+      response: openai.response,
     };
   } else if (serialized.http) {
     const http = serialized.http;

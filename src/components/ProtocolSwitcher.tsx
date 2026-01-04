@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Globe, Server, Plug, ChevronDown } from 'lucide-react';
+import { Globe, Server, Plug, Sparkles, ChevronDown } from 'lucide-react';
 import { useClient } from '../context/useClient';
 import type { Protocol } from '../types/types';
 
@@ -7,6 +7,7 @@ const protocols: { value: Protocol; label: string; icon: typeof Globe }[] = [
   { value: 'rest', label: 'HTTP', icon: Globe },
   { value: 'grpc', label: 'gRPC', icon: Server },
   { value: 'mcp', label: 'MCP', icon: Plug },
+  { value: 'openai', label: 'OpenAI', icon: Sparkles },
 ];
 
 export function ProtocolSwitcher() {

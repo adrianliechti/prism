@@ -40,6 +40,10 @@ function getDisplayPath(entry: Request): string {
     }
     return 'MCP Request';
   }
+  // For OpenAI, show model as subtitle
+  if (entry.protocol === 'openai') {
+    return entry.openai?.model || 'No model';
+  }
   // For gRPC, show just the method name (last part of path)
   if (entry.protocol === 'grpc') {
     try {
@@ -68,6 +72,9 @@ function getDisplayMethod(entry: Request): string {
   if (entry.protocol === 'mcp') {
     return 'MCP';
   }
+  if (entry.protocol === 'openai') {
+    return 'OpenAI';
+  }
   return entry.http?.method ?? 'GET';
 }
 
@@ -77,6 +84,9 @@ function getMethodColor(entry: Request): string {
   }
   if (entry.protocol === 'mcp') {
     return 'text-violet-600 dark:text-violet-400';
+  }
+  if (entry.protocol === 'openai') {
+    return 'text-purple-600 dark:text-purple-400';
   }
   return methodColors[entry.http?.method ?? 'GET'];
 }
@@ -166,7 +176,8 @@ export function Sidebar() {
                         className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(
                           entry.http?.response?.statusCode ?? 
                           (entry.grpc?.response?.error ? 0 : entry.grpc?.response ? 200 : null) ??
-                          (entry.mcp?.response?.error ? 0 : entry.mcp?.response ? 200 : null)
+                          (entry.mcp?.response?.error ? 0 : entry.mcp?.response ? 200 : null) ??
+                          (entry.openai?.response?.error ? 0 : entry.openai?.response ? 200 : null)
                         )}`}
                       />
                       <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>

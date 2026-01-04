@@ -171,7 +171,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
                   type="tool"
                   isSelected={request.mcp?.tool?.name === tool.name}
                   onSelect={() => {
-                    setMcpTool({ name: tool.name, arguments: '{}' });
+                    setMcpTool({ name: tool.name, arguments: '{}', schema: tool.schema });
                     onSelected?.();
                   }}
                 />

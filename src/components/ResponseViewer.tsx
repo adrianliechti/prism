@@ -4,6 +4,7 @@ import { AlertCircle, SendHorizontal, Clock, CheckCircle2, XCircle } from 'lucid
 import { HttpResponseViewer } from './http';
 import { GrpcResponseViewer } from './grpc';
 import { McpResponseViewer } from './mcp';
+import { OpenAIResponseViewer } from './openai';
 import type { McpCallToolResponse, McpReadResourceResponse } from '../lib/data';
 
 function formatDuration(ms: number): string {
@@ -48,6 +49,8 @@ export function ResponseViewer() {
   const grpcResponse = request?.grpc?.response;
   const mcpResponse = request?.mcp?.response;
   const mcpError = request?.mcp?.response?.error;
+  const openaiResponse = request?.openai?.response;
+  const openaiError = request?.openai?.response?.error;
 
   const response = httpResponse ?? (grpcResponse ? {
     status: grpcResponse.error || 'OK',
@@ -57,7 +60,7 @@ export function ResponseViewer() {
     duration: grpcResponse.duration,
   } : undefined);
 
-  const error = response?.error ?? mcpError;
+  const error = response?.error ?? mcpError ?? openaiError;
 
   // Loading state
   if (isLoading) {
@@ -88,7 +91,7 @@ export function ResponseViewer() {
   }
 
   // Empty state - no response yet
-  if (!response && !mcpResponse) {
+  if (!response && !mcpResponse && !openaiResponse) {
     return (
       <div className="h-full flex flex-col items-center justify-center">
         <SendHorizontal className="w-12 h-12 text-neutral-300 dark:text-neutral-600 mb-4" />
@@ -100,6 +103,11 @@ export function ResponseViewer() {
   // Render protocol-specific viewer
   const renderProtocolViewer = () => {
     switch (protocol) {
+      case 'openai':
+        if (openaiResponse) {
+          return <OpenAIResponseViewer />;
+        }
+        break;
       case 'mcp':
         if (mcpResponse?.result) {
           // Determine if it's a tool or resource response based on response shape
@@ -145,13 +153,13 @@ export function ResponseViewer() {
     contentType.includes('audio/') ||
     contentType.includes('application/pdf') ||
     contentType.includes('application/octet-stream');
-  const showViewModeToggle = !isBinaryOrImage; // Show for all protocols including MCP
-  const showHeadersToggle = protocol !== 'mcp' && response;
+  const showViewModeToggle = !isBinaryOrImage && protocol !== 'openai'; // Show for all protocols except binary content and OpenAI
+  const showHeadersToggle = protocol !== 'mcp' && protocol !== 'openai' && response;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Status Bar */}
-      {(response || mcpResponse) && (
+      {(response || mcpResponse || openaiResponse) && (
         <div className="flex items-center gap-3 mb-3 shrink-0">
           {response && (
             <>
@@ -167,12 +175,21 @@ export function ResponseViewer() {
               )}
             </>
           )}
-          {mcpResponse && (
+          {mcpResponse && !response && (
             <>
               <StatusBadge statusCode={200} status="OK" />
               <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
                 <Clock size={12} />
                 <span>{formatDuration(mcpResponse.duration)}</span>
+              </div>
+            </>
+          )}
+          {openaiResponse && !response && !mcpResponse && (
+            <>
+              <StatusBadge statusCode={200} status="OK" />
+              <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                <Clock size={12} />
+                <span>{formatDuration(openaiResponse.duration)}</span>
               </div>
             </>
           )}

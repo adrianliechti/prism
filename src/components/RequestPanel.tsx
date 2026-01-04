@@ -5,6 +5,7 @@ import { SharedRequestActions } from './SharedRequestActions';
 import { HttpRequestBar, HttpRequestPanel } from './http';
 import { GrpcRequestBar, GrpcRequestPanel } from './grpc';
 import { McpRequestBar, McpRequestPanel } from './mcp';
+import { OpenAIRequestBar, OpenAIRequestPanel } from './openai';
 import { ResponseViewer } from './ResponseViewer';
 import { PanelRightClose } from 'lucide-react';
 
@@ -43,6 +44,7 @@ export function RequestPanel() {
           {protocol === 'rest' && <HttpRequestBar />}
           {protocol === 'grpc' && <GrpcRequestBar />}
           {protocol === 'mcp' && <McpRequestBar />}
+          {protocol === 'openai' && <OpenAIRequestBar />}
         </div>
 
         {/* Portal target for shared actions (Send, AI) */}
@@ -65,11 +67,12 @@ export function RequestPanel() {
         {protocol === 'rest' && <HttpRequestPanel />}
         {protocol === 'grpc' && <GrpcRequestPanel />}
         {protocol === 'mcp' && <McpRequestPanel />}
+        {protocol === 'openai' && <OpenAIRequestPanel />}
       </div>
 
       {/* Response */}
       <div className="flex-1 pl-2 pr-3 py-2 flex flex-col min-h-0 overflow-hidden">
-        {(request.http?.response || request.grpc?.response || request.mcp?.response) && (
+        {(request.http?.response || request.grpc?.response || request.mcp?.response || request.openai?.response) && (
           <h2 className="text-[10px] font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider mb-2 shrink-0">Response</h2>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">

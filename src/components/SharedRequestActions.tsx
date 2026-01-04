@@ -24,12 +24,23 @@ export function SharedRequestActions() {
 
   const mcpHasToolOrResource = !!request?.mcp?.tool || !!request?.mcp?.resource;
 
+  const openaiModel = request?.openai?.model ?? '';
+  const openaiChatInput = request?.openai?.chat?.input ?? [];
+  const openaiImagePrompt = request?.openai?.image?.prompt ?? '';
+  
+  // Check if OpenAI has valid input
+  const openaiHasValidInput = request?.openai?.chat
+    ? openaiChatInput.length > 0 && openaiChatInput.some(msg => msg.content.length > 0)
+    : openaiImagePrompt.trim().length > 0;
+
   // Check if we can execute
   const canExecute = protocol === 'rest'
     ? url.length > 0
     : protocol === 'mcp'
       ? url.length > 0 && mcpHasToolOrResource
-      : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
+      : protocol === 'openai'
+        ? url.length > 0 && openaiModel.length > 0 && openaiHasValidInput
+        : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
 
   const handleSubmit = () => {
     executeRequest();

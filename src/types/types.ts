@@ -1,6 +1,6 @@
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
-export type Protocol = 'rest' | 'grpc' | 'mcp';
+export type Protocol = 'rest' | 'grpc' | 'mcp' | 'openai';
 
 // MCP types
 export type McpOperationType = 'discover' | 'tool' | 'resource';
@@ -23,7 +23,7 @@ export interface McpCallToolRequest {
 }
 
 export interface McpContent {
-  type: 'text' | 'image' | 'audio' | 'resource';
+  type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link';
   text?: string;
   data?: string; // base64 encoded for image/audio
   mimeType?: string;
@@ -34,6 +34,10 @@ export interface McpContent {
     blob?: string;
     mimeType?: string;
   };
+  // For resource_link type
+  uri?: string;
+  name?: string;
+  description?: string;
 }
 
 export interface McpCallToolResponse {
@@ -145,12 +149,65 @@ export interface McpRequestData {
   tool?: {
     name: string;
     arguments: string; // JSON parameters
+    schema?: Record<string, unknown>; // Tool input schema for fill button
   };
   resource?: {
     uri: string;
   };
   response?: {
     result?: McpCallToolResponse | McpReadResourceResponse;
+    duration: number;
+    error?: string;
+  };
+}
+
+// OpenAI types
+export type OpenAIBodyType = 'chat' | 'image';
+
+export interface OpenAITextContent {
+  type: 'input_text';
+  text: string;
+}
+
+export interface OpenAIImageContent {
+  type: 'input_image';
+  image_url: string;
+}
+
+export interface OpenAIFileContent {
+  type: 'input_file';
+  file_data: string; // base64 encoded
+  filename: string;
+}
+
+export type OpenAIChatContent = OpenAITextContent | OpenAIImageContent | OpenAIFileContent;
+
+export interface OpenAIChatInput {
+  id: string;
+  role: 'system' | 'user' | 'assistant';
+  content: OpenAIChatContent[];
+}
+
+export interface OpenAITextOutput {
+  type: 'text';
+  text: string;
+}
+
+export interface OpenAIImageOutput {
+  type: 'image';
+  image: string;
+}
+
+export interface OpenAIRequestData {
+  model: string;
+  chat?: {
+    input: OpenAIChatInput[];
+  };
+  image?: {
+    prompt: string;
+  };
+  response?: {
+    result?: OpenAITextOutput | OpenAIImageOutput;
     duration: number;
     error?: string;
   };
@@ -170,4 +227,5 @@ export interface Request {
   http?: HttpRequestData;
   grpc?: GrpcRequestData;
   mcp?: McpRequestData;
+  openai?: OpenAIRequestData;
 }
