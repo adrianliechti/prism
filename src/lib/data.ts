@@ -20,7 +20,8 @@ import type {
   OpenAITextOutput,
   OpenAIImageOutput,
   OpenAIAudioOutput,
-  OpenAITranscriptionOutput
+  OpenAITranscriptionOutput,
+  OpenAIEmbeddingsOutput
 } from '../types/types';
 
 // Re-export types for consumers
@@ -119,8 +120,11 @@ interface OpenAISettings {
   transcription?: {
     file: string;      // Data URL (data:audio/...;base64,...)
   };
+  embeddings?: {
+    text: string;      // Text to convert to embeddings
+  };
   response?: {
-    result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput;
+    result?: OpenAITextOutput | OpenAIImageOutput | OpenAIAudioOutput | OpenAITranscriptionOutput | OpenAIEmbeddingsOutput;
     duration: number;
     error?: string;
   };
@@ -228,6 +232,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
         image: req.openai?.image,
         audio: req.openai?.audio,
         transcription: req.openai?.transcription,
+        embeddings: req.openai?.embeddings,
         response: req.openai?.response,
       };
       break;
@@ -324,6 +329,7 @@ function deserializeRequest(serialized: SerializedRequest): Request {
       image: openai.image,
       audio: openai.audio,
       transcription: openai.transcription,
+      embeddings: openai.embeddings,
       response: openai.response,
     };
   } else if (serialized.http) {

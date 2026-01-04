@@ -2,7 +2,7 @@ import { useClient } from '../../context/useClient';
 import { OpenAIChatEditor } from './OpenAIChatEditor';
 import type { OpenAIBodyType } from '../../types/types';
 
-type Tab = 'chat' | 'image' | 'audio' | 'transcription';
+type Tab = 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings';
 
 export function OpenAIRequestPanel() {
   const { 
@@ -11,23 +11,27 @@ export function OpenAIRequestPanel() {
     setOpenAIImagePrompt,
     setOpenAIAudioText,
     setOpenAIAudioVoice,
-    setOpenAITranscriptionFile
+    setOpenAITranscriptionFile,
+    setOpenAIEmbeddingsText
   } = useClient();
   
   const isChat = !!request?.openai?.chat;
   const isImage = !!request?.openai?.image;
   const isAudio = !!request?.openai?.audio;
-  const bodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : 'transcription';
+  const isTranscription = !!request?.openai?.transcription;
+  const bodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : isTranscription ? 'transcription' : 'embeddings';
   const imagePrompt = request?.openai?.image?.prompt ?? '';
   const audioText = request?.openai?.audio?.text ?? '';
   const audioVoice = request?.openai?.audio?.voice ?? 'alloy';
   const transcriptionFile = request?.openai?.transcription?.file ?? '';
+  const embeddingsText = request?.openai?.embeddings?.text ?? '';
 
   const tabs = [
     { id: 'chat' as Tab, label: 'Chat' },
     { id: 'audio' as Tab, label: 'Audio' },
     { id: 'image' as Tab, label: 'Image' },
     { id: 'transcription' as Tab, label: 'Transcription' },
+    { id: 'embeddings' as Tab, label: 'Embeddings' },
   ];
 
   const handleTabChange = (tab: Tab) => {
@@ -162,6 +166,21 @@ export function OpenAIRequestPanel() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {bodyType === 'embeddings' && (
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400">
+              Text
+            </label>
+            <textarea
+              value={embeddingsText}
+              onChange={(e) => setOpenAIEmbeddingsText(e.target.value)}
+              placeholder="Enter text to convert to embeddings..."
+              rows={4}
+              className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
+            />
           </div>
         )}
       </div>

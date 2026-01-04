@@ -115,6 +115,7 @@ interface ClientContextType {
   setOpenAIAudioText: (text: string) => void;
   setOpenAIAudioVoice: (voice: string) => void;
   setOpenAITranscriptionFile: (file: string) => void;
+  setOpenAIEmbeddingsText: (text: string) => void;
   
   // History actions
   loadFromHistory: (entry: Request) => void;
@@ -354,7 +355,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image' | 'audio' | 'transcription') => {
+  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings') => {
     setState(prev => {
       const currentOpenAI = prev.request.openai;
       const newOpenAI: OpenAIRequestData = {
@@ -365,7 +366,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           ? { image: currentOpenAI?.image ?? { prompt: '' } }
           : bodyType === 'audio'
           ? { audio: currentOpenAI?.audio ?? { text: '', voice: 'alloy' } }
-          : { transcription: currentOpenAI?.transcription ?? { file: '' } }
+          : bodyType === 'transcription'
+          ? { transcription: currentOpenAI?.transcription ?? { file: '' } }
+          : { embeddings: currentOpenAI?.embeddings ?? { text: '' } }
         ),
       };
       return {
@@ -434,6 +437,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         openai: prev.request.openai
           ? { ...prev.request.openai, transcription: { file } }
           : { model: '', transcription: { file } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIEmbeddingsText = useCallback((text: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, embeddings: { text } }
+          : { model: '', embeddings: { text } },
       },
     }));
   }, []);
@@ -867,6 +882,31 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             result: { type: 'transcription', text: transcriptionText },
             duration: Math.round(performance.now() - startTime) 
           };
+        } else if (req.openai?.embeddings) {
+          // Embeddings generation via /v1/embeddings
+          const text = req.openai?.embeddings?.text ?? '';
+          if (!text) {
+            throw new Error('Please enter text to convert to embeddings');
+          }
+
+          const response = await fetch(`${baseUrl}/v1/embeddings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, input: text }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
+          const data = await response.json();
+          const embeddings = (data.data?.[0]?.embedding || []) as number[];
+          
+          openaiResponse = { 
+            result: { type: 'embeddings', embeddings },
+            duration: Math.round(performance.now() - startTime) 
+          };
         } else {
           throw new Error('Invalid OpenAI request type');
         }
@@ -1290,6 +1330,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setOpenAIAudioText,
     setOpenAIAudioVoice,
     setOpenAITranscriptionFile,
+    setOpenAIEmbeddingsText,
     loadFromHistory,
     clearHistory,
     deleteHistoryEntry,

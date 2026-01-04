@@ -143,6 +143,22 @@ export function OpenAIResponseViewer() {
     );
   }
 
+  // Embeddings response
+  if (result.type === 'embeddings') {
+    return (
+      <div className="h-full overflow-auto">
+        <div className="p-4 space-y-2">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            {result.embeddings.length} dimensions
+          </div>
+          <pre className="text-xs overflow-auto text-neutral-800 dark:text-neutral-200">
+            {JSON.stringify(result.embeddings, null, 2)}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="text-sm text-neutral-500 dark:text-neutral-400">
       Unknown response type
