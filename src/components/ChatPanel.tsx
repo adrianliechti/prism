@@ -3,16 +3,21 @@ import { Send, X, Trash2, Square, Loader2, Sparkles } from 'lucide-react';
 import { useChat, stream, type UIMessage } from '@tanstack/ai-react';
 import { chat, maxIterations } from '@tanstack/ai';
 import { createChatAdapter, getConfiguredModel } from '../api/chatAdapter';
-import { createRequestTools, buildRequestInstructions, requestAdapterConfig } from '../api/requestTools';
-import type { RequestChatEnvironment, RequestSetters } from '../types/chat';
+import type { AllSetters } from '../types/chat';
 import type { Request } from '../types/types';
 import { Markdown } from './Markdown';
+
+// Protocol-specific tools imports
+import { createTools as createHttpTools, getInstructions as getHttpInstructions, adapterConfig as httpAdapterConfig } from './http/httpTools';
+import { createTools as createGrpcTools, getInstructions as getGrpcInstructions, adapterConfig as grpcAdapterConfig } from './grpc/grpcTools';
+import { createTools as createMcpTools, getInstructions as getMcpInstructions, adapterConfig as mcpAdapterConfig } from './mcp/mcpTools';
+import { createTools as createOpenAITools, getInstructions as getOpenAIInstructions, adapterConfig as openaiAdapterConfig } from './openai/openaiTools';
 
 interface ChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
   request: Request;
-  setters: RequestSetters;
+  setters: AllSetters;
 }
 
 export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps) {
@@ -24,7 +29,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
   // Track request ID changes to reset chat
   const prevRequestIdRef = useRef(request.id);
 
-  // Read response body text when available
+  // Read response body text when available (for HTTP protocol)
   useEffect(() => {
     async function readResponseBody() {
       const httpResponse = request.http?.response;
@@ -42,21 +47,41 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     readResponseBody();
   }, [request.http?.response, request.http?.response?.body]);
 
-  // Create environment for tools
-  const environment: RequestChatEnvironment = useMemo(() => ({
-    request,
-    setters,
-    responseBodyText,
-  }), [request, setters, responseBodyText]);
-
-  // Create tools
-  const tools = useMemo(() => createRequestTools(environment), [environment]);
+  // Get protocol-specific tools, instructions, and adapter config
+  const { tools, instructions, adapterConfig } = useMemo(() => {
+    switch (request.protocol) {
+      case 'grpc':
+        return {
+          tools: createGrpcTools({ request, setters }),
+          instructions: getGrpcInstructions(),
+          adapterConfig: grpcAdapterConfig,
+        };
+      case 'mcp':
+        return {
+          tools: createMcpTools({ request, setters }),
+          instructions: getMcpInstructions(),
+          adapterConfig: mcpAdapterConfig,
+        };
+      case 'openai':
+        return {
+          tools: createOpenAITools({ request, setters }),
+          instructions: getOpenAIInstructions(),
+          adapterConfig: openaiAdapterConfig,
+        };
+      case 'rest':
+      default:
+        return {
+          tools: createHttpTools({ request, setters, responseBodyText }),
+          instructions: getHttpInstructions(),
+          adapterConfig: httpAdapterConfig,
+        };
+    }
+  }, [request, setters, responseBodyText]);
 
   // Create connection adapter that wraps the chat() function
   const connection = useMemo(() => {
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
-    const instructions = buildRequestInstructions();
 
     return stream((messages) => 
       chat({
@@ -68,7 +93,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
         agentLoopStrategy: maxIterations(10),
       })
     );
-  }, [tools]);
+  }, [tools, instructions]);
 
   const { messages, sendMessage, isLoading, stop, clear } = useChat({
     connection,
@@ -135,7 +160,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
       <div className="shrink-0 h-12 px-4 flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800">
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-amber-500" />
-          <h3 className="font-medium text-neutral-900 dark:text-neutral-100">{requestAdapterConfig.name}</h3>
+          <h3 className="font-medium text-neutral-900 dark:text-neutral-100">{adapterConfig.name}</h3>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -218,7 +243,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={requestAdapterConfig.placeholder}
+            placeholder={adapterConfig.placeholder}
             rows={1}
             disabled={isLoading}
             className="flex-1 px-3 py-2 bg-neutral-50 border border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700 rounded-lg text-neutral-900 dark:text-neutral-100 text-sm placeholder-neutral-400 resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 disabled:opacity-50"

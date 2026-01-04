@@ -119,9 +119,6 @@ export function GrpcRequestPanel() {
 
         {activeTab === 'headers' && (
           <div className="space-y-2">
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              gRPC metadata (sent as headers)
-            </p>
             <KeyValueEditor
               items={metadata}
               onChange={setGrpcMetadata}

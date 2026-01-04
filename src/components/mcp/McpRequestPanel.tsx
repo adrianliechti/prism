@@ -72,7 +72,7 @@ export function McpRequestPanel() {
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
-    { id: 'body', label: 'Body' },
+    { id: 'body', label: 'Payload' },
   ];
 
   return (
