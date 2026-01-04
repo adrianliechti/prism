@@ -27,8 +27,15 @@ export function resolveVariables(
 
     switch (varType) {
       case 'file_base64':
-      case 'base64':
         replacement = variable?.data || missingDataPlaceholder;
+        break;
+      case 'base64':
+        // Encode the text to base64
+        if (variable?.data) {
+          replacement = btoa(variable.data);
+        } else {
+          replacement = missingDataPlaceholder;
+        }
         break;
       case 'file_dataurl':
         if (variable?.data && variable?.mimeType) {

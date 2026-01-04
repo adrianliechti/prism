@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { FormDataField } from '../types/types';
+import type { FormDataField } from '../../types/types';
 import { Trash2, Circle, CheckCircle2, Paperclip, X } from 'lucide-react';
 
 interface FormDataEditorProps {

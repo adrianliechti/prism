@@ -1,42 +1,16 @@
 import { ClientProvider } from './context/ClientContext';
+import { RequestBarPortalProvider } from './context/RequestBarPortal';
 import { useClient } from './context/useClient';
 import { Sidebar } from './components/Sidebar';
 import { RequestPanel } from './components/RequestPanel';
 import { ChatPanel } from './components/ChatPanel';
-import { getStatusBadge, formatBytes } from './utils/format';
 import { getConfig } from './config';
-
-function StatusBar() {
-  const { request } = useClient();
-
-  if (!request?.httpResponse) {
-    return null;
-  }
-
-  const response = request.httpResponse;
-
-  return (
-    <div className="px-3 py-2 flex items-center gap-4 text-xs shrink-0">
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${getStatusBadge(response.statusCode)}`}>
-        {response.statusCode > 0 ? response.status : 'Error'}
-      </span>
-      <div className="flex items-center gap-2">
-        <span className="text-neutral-400 dark:text-neutral-500">Time:</span>
-        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{response.duration}ms</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-neutral-400 dark:text-neutral-500">Size:</span>
-        <span className="text-neutral-700 dark:text-neutral-200 font-medium">{formatBytes(response.body.size)}</span>
-      </div>
-    </div>
-  );
-}
 
 function AppContent() {
   const { request, aiPanelOpen, toggleAiPanel, setMethod, setUrl, setHeaders, setQuery, setBody } = useClient();
 
   return (
-    <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2">
+    <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2 text-neutral-900 dark:text-neutral-100">
       {/* Sidebar */}
       <Sidebar />
 
@@ -46,9 +20,6 @@ function AppContent() {
         <div className="flex-1 overflow-hidden min-h-0">
           <RequestPanel />
         </div>
-
-        {/* Status Bar - Fixed at bottom */}
-        <StatusBar />
       </div>
 
       {/* Chat Panel - Inline */}
@@ -67,7 +38,9 @@ function AppContent() {
 function App() {
   return (
     <ClientProvider>
-      <AppContent />
+      <RequestBarPortalProvider>
+        <AppContent />
+      </RequestBarPortalProvider>
     </ClientProvider>
   );
 }

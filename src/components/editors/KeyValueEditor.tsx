@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { KeyValuePair } from '../types/types';
+import type { KeyValuePair } from '../../types/types';
 import { Trash2, Circle, CheckCircle2 } from 'lucide-react';
 
 interface KeyValueEditorProps {

@@ -26,23 +26,24 @@ function truncateBody(body: string | undefined | null): string {
 
 // Format request for AI context
 function formatRequestForAI(request: Request): Record<string, unknown> {
-  const bodyContent = request.body.type === 'json' 
-    ? request.body.content 
-    : request.body.type === 'raw' 
-      ? request.body.content 
-      : request.body.type === 'form-urlencoded'
-        ? request.body.data
-        : request.body.type === 'form-data'
-          ? request.body.data.map((f: FormDataField) => ({ key: f.key, type: f.type, value: f.type === 'file' ? f.file?.name : f.value }))
+  const httpBody = request.http?.body ?? { type: 'none' as const };
+  const bodyContent = httpBody.type === 'json' 
+    ? httpBody.content 
+    : httpBody.type === 'raw' 
+      ? httpBody.content 
+      : httpBody.type === 'form-urlencoded'
+        ? httpBody.data
+        : httpBody.type === 'form-data'
+          ? httpBody.data.map((f: FormDataField) => ({ key: f.key, type: f.type, value: f.type === 'file' ? f.file?.name : f.value }))
           : null;
 
   return {
-    method: request.method,
+    method: request.http?.method ?? 'GET',
     url: request.url,
-    headers: request.headers.filter((h: KeyValuePair) => h.enabled !== false),
-    queryParams: request.query.filter((q: KeyValuePair) => q.enabled !== false),
+    headers: (request.http?.headers ?? []).filter((h: KeyValuePair) => h.enabled !== false),
+    queryParams: (request.http?.query ?? []).filter((q: KeyValuePair) => q.enabled !== false),
     body: {
-      type: request.body.type,
+      type: httpBody.type,
       content: bodyContent,
     },
   };
@@ -50,7 +51,7 @@ function formatRequestForAI(request: Request): Record<string, unknown> {
 
 // Format response for AI context
 function formatResponseForAI(request: Request, bodyText?: string): Record<string, unknown> | null {
-  const response = request.httpResponse;
+  const response = request.http?.response;
   if (!response) return null;
 
   return {
@@ -225,7 +226,8 @@ export function createRequestTools(environment: RequestChatEnvironment) {
 
   const addHeader = addHeaderDef.client(async (args: unknown) => {
     const input = args as AddHeaderInput;
-    const newHeaders = [...request.headers, { id: generateId(), key: input.key, value: input.value, enabled: true }];
+    const existingHeaders = request.http?.headers ?? [];
+    const newHeaders = [...existingHeaders, { id: generateId(), key: input.key, value: input.value, enabled: true }];
     setters.setHeaders(newHeaders);
     return { success: true, added: { key: input.key, value: input.value } };
   });
@@ -248,7 +250,8 @@ export function createRequestTools(environment: RequestChatEnvironment) {
 
   const addQueryParam = addQueryParamDef.client(async (args: unknown) => {
     const input = args as AddQueryParamInput;
-    const newParams = [...request.query, { id: generateId(), key: input.key, value: input.value, enabled: true }];
+    const existingQuery = request.http?.query ?? [];
+    const newParams = [...existingQuery, { id: generateId(), key: input.key, value: input.value, enabled: true }];
     setters.setQuery(newParams);
     return { success: true, added: { key: input.key, value: input.value } };
   });
@@ -310,8 +313,9 @@ export function createRequestTools(environment: RequestChatEnvironment) {
   const removeHeader = removeHeaderDef.client(async (args: unknown) => {
     const input = args as RemoveHeaderInput;
     const keyLower = input.key.toLowerCase();
-    const filtered = request.headers.filter((h: KeyValuePair) => h.key.toLowerCase() !== keyLower);
-    const removedCount = request.headers.length - filtered.length;
+    const existingHeaders = request.http?.headers ?? [];
+    const filtered = existingHeaders.filter((h: KeyValuePair) => h.key.toLowerCase() !== keyLower);
+    const removedCount = existingHeaders.length - filtered.length;
     if (removedCount === 0) {
       return { success: false, error: `Header '${input.key}' not found` };
     }
@@ -321,8 +325,9 @@ export function createRequestTools(environment: RequestChatEnvironment) {
 
   const removeQueryParam = removeQueryParamDef.client(async (args: unknown) => {
     const input = args as RemoveQueryParamInput;
-    const filtered = request.query.filter((q: KeyValuePair) => q.key !== input.key);
-    const removedCount = request.query.length - filtered.length;
+    const existingQuery = request.http?.query ?? [];
+    const filtered = existingQuery.filter((q: KeyValuePair) => q.key !== input.key);
+    const removedCount = existingQuery.length - filtered.length;
     if (removedCount === 0) {
       return { success: false, error: `Query parameter '${input.key}' not found` };
     }

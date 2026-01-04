@@ -183,6 +183,13 @@ export function getChipLabel(type: VariableType, _id: string, variable?: Variabl
     case 'file_base64':
     case 'file_dataurl':
       return variable?.data ? (variable.name || 'file') : 'Select file...';
+    case 'base64':
+      // Show the entered text (truncated if too long), or prompt to enter
+      if (variable?.data) {
+        const text = variable.data;
+        return text.length > 12 ? text.slice(0, 12) + '…' : text;
+      }
+      return 'Enter text...';
     default: return variable?.name || type;
   }
 }
