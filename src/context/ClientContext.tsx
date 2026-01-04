@@ -12,6 +12,10 @@ import {
   type RequestBody,
   type Variable,
   type ClientRequest,
+  type McpOperationType,
+  type McpListFeaturesResponse,
+  type McpCallToolResponse,
+  type McpReadResourceResponse,
 } from '../lib/data';
 import { resolveVariables } from '../utils/variables';
 
@@ -63,6 +67,15 @@ interface ClientContextType {
   clearResponse: () => void;
   newRequest: () => void;
   
+  // gRPC-specific actions
+  setGrpcMethodSchema: (schema: Record<string, unknown> | undefined) => void;
+  
+  // MCP-specific actions
+  setMcpOperation: (operation: McpOperationType) => void;
+  setMcpSelectedTool: (tool: string | undefined) => void;
+  setMcpSelectedResource: (resource: string | undefined) => void;
+  discoverMcpFeatures: () => Promise<void>;
+  
   // History actions
   loadFromHistory: (entry: Request) => void;
   clearHistory: () => void;
@@ -99,6 +112,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: { ...prev.request, ...updates },
     }));
+  }, []);
+
+  const buildMcpProxyPath = useCallback((serverUrl: string, suffix: string) => {
+    try {
+      const url = new URL(serverUrl);
+      const scheme = url.protocol.replace(/:$/, '');
+      const host = url.host;
+      const path = url.pathname.replace(/^\//, '');
+      const cleanSuffix = suffix.replace(/^\//, '');
+      const base = `/proxy/mcp/${scheme}/${host}/${cleanSuffix}`;
+      return path ? `${base}?path=${encodeURIComponent(path)}` : base;
+    } catch {
+      return '';
+    }
   }, []);
 
   // Request actions
@@ -145,6 +172,61 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       };
     });
   }, []);
+
+  // gRPC-specific setters
+  const setGrpcMethodSchema = useCallback((grpcMethodSchema: Record<string, unknown> | undefined) => {
+    updateRequest({ grpcMethodSchema });
+  }, [updateRequest]);
+
+  // MCP-specific setters
+  const setMcpOperation = useCallback((mcpOperation: McpOperationType) => {
+    updateRequest({ mcpOperation });
+  }, [updateRequest]);
+
+  const setMcpSelectedTool = useCallback((mcpSelectedTool: string | undefined) => {
+    updateRequest({ mcpSelectedTool, mcpSelectedResource: undefined });
+  }, [updateRequest]);
+
+  const setMcpSelectedResource = useCallback((mcpSelectedResource: string | undefined) => {
+    updateRequest({ mcpSelectedResource, mcpSelectedTool: undefined });
+  }, [updateRequest]);
+
+  // Discover MCP features from server
+  const discoverMcpFeatures = useCallback(async () => {
+    const req = state.request;
+    if (!req.url) return;
+
+    updateRequest({ executing: true });
+
+    try {
+      const path = buildMcpProxyPath(req.url, 'features');
+      if (!path) {
+        throw new Error('Invalid MCP server URL');
+      }
+
+      const response = await fetch(path);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+      const features: McpListFeaturesResponse = await response.json();
+      updateRequest({ 
+        mcpFeatures: features, 
+        executing: false,
+        mcpOperation: 'discover',
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      updateRequest({ 
+        executing: false,
+        mcpFeatures: {
+          tools: [],
+          resources: [],
+          error: errorMessage,
+        },
+      });
+    }
+  }, [state.request, updateRequest]);
 
   const clearResponse = useCallback(() => {
     updateRequest({ httpResponse: null });
@@ -232,6 +314,148 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         };
 
         // Save to collection (TanStack DB handles persistence)
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
+
+        setState(prev => ({
+          ...prev,
+          request: updatedRequest,
+        }));
+
+        return;
+      }
+
+      // MCP mode
+      if (req.protocol === 'mcp') {
+        const serverUrl = req.url;
+        if (!serverUrl) {
+          throw new Error('MCP server URL is required');
+        }
+
+        const startTime = performance.now();
+        let responseBody: Blob;
+        let responseHeaders: Record<string, string> = {};
+        let statusCode = 200;
+        let status = 'OK';
+
+        // Determine what to execute based on selected tool/resource
+        if (req.mcpSelectedTool) {
+          // Call a tool
+          let args: Record<string, unknown> = {};
+          if (req.body.type === 'json' && req.body.content) {
+            try {
+              args = JSON.parse(req.body.content);
+            } catch {
+              // Ignore parse errors, use empty args
+            }
+          }
+
+          const path = buildMcpProxyPath(serverUrl, 'tool/call');
+          if (!path) throw new Error('Invalid MCP server URL');
+
+          const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: req.mcpSelectedTool, arguments: args }),
+          });
+
+          statusCode = response.status;
+          status = response.statusText || String(response.status);
+          response.headers.forEach((value, key) => {
+            responseHeaders[key.toLowerCase()] = value;
+          });
+          const result: McpCallToolResponse = await response.json();
+          
+          const updatedReq: Partial<Request> = {
+            mcpToolResponse: result,
+          };
+
+          // Convert result to blob for display
+          responseBody = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+          
+          updateRequest(updatedReq);
+        } else if (req.mcpSelectedResource) {
+          // Read a resource - get URI from the feature schema
+          const resourceFeature = req.mcpFeatures?.resources.find(r => r.name === req.mcpSelectedResource);
+          const uri = resourceFeature?.schema?.uri as string || req.mcpSelectedResource;
+
+          const path = buildMcpProxyPath(serverUrl, 'resource/call');
+          if (!path) throw new Error('Invalid MCP server URL');
+
+          const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uri }),
+          });
+
+          statusCode = response.status;
+          status = response.statusText || String(response.status);
+          response.headers.forEach((value, key) => {
+            responseHeaders[key.toLowerCase()] = value;
+          });
+          const result: McpReadResourceResponse = await response.json();
+
+          const updatedReq: Partial<Request> = {
+            mcpResourceResponse: result,
+          };
+
+          // Convert result to blob for display
+          responseBody = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+          
+          updateRequest(updatedReq);
+        } else {
+          // Just discover features if nothing selected
+          const path = buildMcpProxyPath(serverUrl, 'features');
+          if (!path) throw new Error('Invalid MCP server URL');
+
+          const response = await fetch(path);
+          statusCode = response.status;
+          status = response.statusText || String(response.status);
+          response.headers.forEach((value, key) => {
+            responseHeaders[key.toLowerCase()] = value;
+          });
+          const features: McpListFeaturesResponse = await response.json();
+          
+          updateRequest({ mcpFeatures: features, mcpOperation: 'discover' });
+          responseBody = new Blob([JSON.stringify(features, null, 2)], { type: 'application/json' });
+        }
+
+        const duration = Math.round(performance.now() - startTime);
+
+        const clientRequest: ClientRequest = {
+          method: 'POST',
+          url: serverUrl,
+          headers: {},
+          query: {},
+          body: req.mcpSelectedTool ? JSON.stringify({ name: req.mcpSelectedTool }) : '',
+          options: { insecure: false, redirect: false },
+        };
+
+        const clientResponse = {
+          status,
+          statusCode,
+          headers: responseHeaders,
+          body: responseBody,
+          duration,
+        };
+
+        const executionTime = Date.now();
+        const updatedRequest: Request = {
+          ...req,
+          ...state.request, // Include any updates made during execution
+          executionTime,
+          httpRequest: clientRequest,
+          httpResponse: clientResponse,
+          executing: false,
+        };
+
+        // Save to collection
         const existingInHistory = history.find(h => h.id === req.id);
         if (existingInHistory) {
           requestsCollection.update(req.id, (draft) => {
@@ -532,6 +756,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     executeRequest,
     clearResponse,
     newRequest,
+    setGrpcMethodSchema,
+    setMcpOperation,
+    setMcpSelectedTool,
+    setMcpSelectedResource,
+    discoverMcpFeatures,
     loadFromHistory,
     clearHistory,
     deleteHistoryEntry,

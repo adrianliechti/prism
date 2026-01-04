@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os/exec"
@@ -13,13 +14,18 @@ import (
 )
 
 func main() {
+	portFlag := flag.Int("port", 9999, "port to listen on (0 for random free port)")
+	serverFlag := flag.Bool("server", false, "start server without opening browser")
+
+	flag.Parse()
+
 	cfg, err := config.New()
 
 	if err != nil {
 		panic(err)
 	}
 
-	port, err := getFreePort("localhost", 9999)
+	serverPort, err := getFreePort("localhost", *portFlag)
 
 	if err != nil {
 		panic(err)
@@ -31,10 +37,12 @@ func main() {
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", port)
-	addr := fmt.Sprintf("localhost:%d", port)
+	url := fmt.Sprintf("http://localhost:%d", serverPort)
+	addr := fmt.Sprintf("localhost:%d", serverPort)
 
-	openBrowser(url)
+	if !*serverFlag {
+		openBrowser(url)
+	}
 	fmt.Printf("Prism is running at %s\n", url)
 
 	if err := srv.ListenAndServe(context.Background(), addr); err != nil {

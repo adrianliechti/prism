@@ -136,9 +136,11 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 
 		for j := 0; j < methods.Len(); j++ {
 			m := methods.Get(j)
-			svcReflection.Methods = append(svcReflection.Methods, MethodReflection{
-				Name: string(m.Name()),
-			})
+			methodRef := MethodReflection{
+				Name:   string(m.Name()),
+				Schema: buildMessageSchema(m.Input()),
+			}
+			svcReflection.Methods = append(svcReflection.Methods, methodRef)
 		}
 
 		response.Services = append(response.Services, svcReflection)
@@ -146,6 +148,90 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// buildMessageSchema creates a JSON Schema-like representation of a protobuf message
+func buildMessageSchema(msg protoreflect.MessageDescriptor) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	}
+
+	properties := schema["properties"].(map[string]interface{})
+	fields := msg.Fields()
+
+	for i := 0; i < fields.Len(); i++ {
+		field := fields.Get(i)
+		fieldName := string(field.JSONName())
+		properties[fieldName] = buildFieldSchema(field)
+	}
+
+	return schema
+}
+
+func buildFieldSchema(field protoreflect.FieldDescriptor) map[string]interface{} {
+	schema := map[string]interface{}{}
+
+	if field.IsList() {
+		schema["type"] = "array"
+		schema["items"] = buildScalarSchema(field)
+		return schema
+	}
+
+	if field.IsMap() {
+		schema["type"] = "object"
+		schema["additionalProperties"] = buildScalarSchema(field.MapValue())
+		return schema
+	}
+
+	return buildScalarSchema(field)
+}
+
+func buildScalarSchema(field protoreflect.FieldDescriptor) map[string]interface{} {
+	schema := map[string]interface{}{}
+
+	switch field.Kind() {
+	case protoreflect.BoolKind:
+		schema["type"] = "boolean"
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		schema["type"] = "integer"
+		schema["format"] = "int32"
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		schema["type"] = "integer"
+		schema["format"] = "int64"
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		schema["type"] = "integer"
+		schema["format"] = "uint32"
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		schema["type"] = "integer"
+		schema["format"] = "uint64"
+	case protoreflect.FloatKind:
+		schema["type"] = "number"
+		schema["format"] = "float"
+	case protoreflect.DoubleKind:
+		schema["type"] = "number"
+		schema["format"] = "double"
+	case protoreflect.StringKind:
+		schema["type"] = "string"
+	case protoreflect.BytesKind:
+		schema["type"] = "string"
+		schema["format"] = "byte"
+	case protoreflect.EnumKind:
+		schema["type"] = "string"
+		enumValues := field.Enum().Values()
+		values := make([]string, enumValues.Len())
+		for i := 0; i < enumValues.Len(); i++ {
+			values[i] = string(enumValues.Get(i).Name())
+		}
+		schema["enum"] = values
+	case protoreflect.MessageKind:
+		// Recursively build nested message schema
+		return buildMessageSchema(field.Message())
+	default:
+		schema["type"] = "string"
+	}
+
+	return schema
 }
 
 func messageFromJSON(ctx context.Context, conn *grpc.ClientConn, service, method string, jsonBody []byte) (proto.Message, protoreflect.MethodDescriptor, error) {

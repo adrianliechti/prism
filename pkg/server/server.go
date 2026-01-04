@@ -26,6 +26,9 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	mux.HandleFunc("/proxy/grpc/{host}/{path...}", s.handleGRPC)
+	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/features", s.handleMcpListFeatures)
+	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/tool/call", s.handleMcpCallTool)
+	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/resource/call", s.handleMcpReadResource)
 	mux.HandleFunc("/proxy/{scheme}/{host}/{path...}", s.handleProxy)
 
 	mux.HandleFunc("GET /data/{store}", s.handleDataList)

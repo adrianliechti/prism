@@ -10,6 +10,10 @@ interface JsonEditorProps {
   variables: Variable[];
   onVariablesChange: (variables: Variable[]) => void;
   placeholder?: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 interface VariableTypeOption {
@@ -28,7 +32,7 @@ const variableTypes: VariableTypeOption[] = [
   { type: 'random_string', label: 'Random String', description: '16-char random', icon: <Shuffle className="w-3.5 h-3.5" /> },
 ];
 
-export function JsonEditor({ value, onChange, variables, onVariablesChange, placeholder }: JsonEditorProps) {
+export function JsonEditor({ value, onChange, variables, onVariablesChange, placeholder, action }: JsonEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -296,7 +300,17 @@ export function JsonEditor({ value, onChange, variables, onVariablesChange, plac
       )}
       
       {/* Status bar */}
-      <div className="flex items-center justify-end gap-2 px-3 py-1.5 text-xs shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-xs shrink-0">
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="text-[11px] px-2 py-0.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+          >
+            {action.label}
+          </button>
+        )}
+        <div className="flex-1" />
         <button
           onClick={() => setShowRaw(!showRaw)}
           className={`transition-colors flex items-center gap-1 ${showRaw ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-500 hover:text-zinc-300'}`}

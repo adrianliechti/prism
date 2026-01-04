@@ -8,6 +8,10 @@ import type {
   HttpMethod,
   Protocol,
   Variable,
+  McpOperationType,
+  McpListFeaturesResponse,
+  McpCallToolResponse,
+  McpReadResourceResponse,
 } from '../types/types';
 import type { ClientRequest, ClientResponse } from '../types/client';
 
@@ -21,6 +25,10 @@ export type {
   Variable,
   ClientRequest,
   ClientResponse,
+  McpOperationType,
+  McpListFeaturesResponse,
+  McpCallToolResponse,
+  McpReadResourceResponse,
 };
 
 // Shared utility for generating unique IDs
