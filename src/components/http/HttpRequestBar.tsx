@@ -16,7 +16,7 @@ const methodColors: Record<HttpMethod, string> = {
 export function HttpRequestBar() {
   const { request, setUrl, setMethod } = useClient();
 
-  const method = request?.method ?? 'GET';
+  const method = request?.http?.method ?? 'GET';
   const url = request?.url ?? '';
 
   return (

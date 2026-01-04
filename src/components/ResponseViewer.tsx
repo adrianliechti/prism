@@ -1,124 +1,62 @@
-import { useState } from 'react';
 import { useClient } from '../context/useClient';
-import { AlertCircle, SendHorizontal } from 'lucide-react';
-import {
-  JsonViewer,
-  XmlViewer,
-  YamlViewer,
-  TextViewer,
-  BinaryViewer,
-  ImageViewer,
-  EventStreamViewer,
-} from './viewers';
+import { AlertCircle, SendHorizontal, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { HttpResponseViewer } from './http';
+import { GrpcResponseViewer } from './grpc';
+import { McpResponseViewer } from './mcp';
+import type { McpCallToolResponse, McpReadResourceResponse } from '../lib/data';
 
-type ViewMode = 'pretty' | 'raw';
-type ContentType = 'json' | 'xml' | 'yaml' | 'text' | 'binary' | 'image' | 'sse';
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${(ms / 60000).toFixed(2)}m`;
+}
 
-// Known binary MIME types
-const BINARY_MIME_PATTERNS = [
-  'video/',
-  'audio/',
-  'application/pdf',
-  'application/octet-stream',
-  'application/zip',
-  'application/gzip',
-  'application/x-tar',
-  'application/x-rar',
-  'application/x-7z',
-  'application/vnd.ms-',
-  'application/vnd.openxmlformats',
-  'application/x-executable',
-  'application/x-sharedlib',
-  'application/x-mach-binary',
-  'application/wasm',
-  'font/',
-];
+function getStatusColor(statusCode: number): string {
+  if (statusCode >= 200 && statusCode < 300) return 'text-emerald-600 dark:text-emerald-400';
+  if (statusCode >= 300 && statusCode < 400) return 'text-amber-600 dark:text-amber-400';
+  if (statusCode >= 400 && statusCode < 500) return 'text-orange-600 dark:text-orange-400';
+  if (statusCode >= 500) return 'text-red-600 dark:text-red-400';
+  return 'text-neutral-600 dark:text-neutral-400';
+}
 
-// Known image MIME types
-const IMAGE_MIME_PATTERNS = [
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-  'image/svg+xml',
-  'image/bmp',
-  'image/x-icon',
-  'image/ico',
-  'image/avif',
-  'image/apng',
-];
-
-// Known text MIME types (even without 'text/' prefix)
-const TEXT_MIME_PATTERNS = [
-  'text/',
-  'application/json',
-  'application/xml',
-  'application/javascript',
-  'application/ecmascript',
-  'application/x-javascript',
-  'application/ld+json',
-  'application/manifest+json',
-  'application/schema+json',
-  'application/x-www-form-urlencoded',
-  'application/xhtml+xml',
-  'application/rss+xml',
-  'application/atom+xml',
-  'application/soap+xml',
-  'application/x-yaml',
-  'application/yaml',
-  '+json',
-  '+xml',
-];
-
-function detectContentType(headers: Record<string, string>): ContentType {
-  const contentType = headers['content-type']?.toLowerCase() || '';
+function StatusBadge({ statusCode, status }: { statusCode: number; status: string }) {
+  const colorClass = getStatusColor(statusCode);
+  const isSuccess = statusCode >= 200 && statusCode < 300;
+  const isError = statusCode >= 400;
   
-  // Check for SSE (Server-Sent Events)
-  if (contentType.includes('text/event-stream')) {
-    return 'sse';
-  }
-  
-  // Check for image types first
-  if (IMAGE_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
-    return 'image';
-  }
-  
-  // Check for known binary content types
-  if (BINARY_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
-    return 'binary';
-  }
-  
-  // Now detect specific text formats
-  if (contentType.includes('json') || contentType.endsWith('+json')) {
-    return 'json';
-  }
-  
-  if (contentType.includes('xml') || contentType.endsWith('+xml')) {
-    return 'xml';
-  }
-  
-  if (contentType.includes('yaml') || contentType.includes('yml')) {
-    return 'yaml';
-  }
-  
-  // Check for known text content types
-  if (TEXT_MIME_PATTERNS.some(pattern => contentType.includes(pattern))) {
-    return 'text';
-  }
-  
-  // Default to text for unknown types
-  return 'text';
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md bg-neutral-100 dark:bg-white/5 ${colorClass}`}>
+      {isSuccess && <CheckCircle2 size={14} />}
+      {isError && <XCircle size={14} />}
+      <span className="text-xs font-medium">{statusCode}</span>
+      <span className="text-xs opacity-75">{status}</span>
+    </div>
+  );
 }
 
 export function ResponseViewer() {
   const { request } = useClient();
-  const [viewMode, setViewMode] = useState<ViewMode>('pretty');
-  const [showHeaders, setShowHeaders] = useState(false);
 
-  const response = request?.httpResponse;
   const isLoading = request?.executing ?? false;
-  const error = response?.error;
+  const protocol = request?.protocol ?? 'rest';
+  
+  // Protocol-specific responses
+  const httpResponse = request?.http?.response;
+  const grpcResponse = request?.grpc?.response;
+  const mcpResponse = request?.mcp?.response;
+  const mcpError = request?.mcp?.response?.error;
 
+  const response = httpResponse ?? (grpcResponse ? {
+    status: grpcResponse.error || 'OK',
+    statusCode: grpcResponse.error ? 0 : 200,
+    headers: grpcResponse.metadata ?? {},
+    body: new Blob([grpcResponse.body], { type: 'application/json' }),
+    duration: grpcResponse.duration,
+  } : undefined);
+
+  const error = response?.error ?? mcpError;
+
+  // Loading state
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-50">
@@ -131,6 +69,7 @@ export function ResponseViewer() {
     );
   }
 
+  // Error state
   if (error) {
     return (
       <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4">
@@ -145,7 +84,8 @@ export function ResponseViewer() {
     );
   }
 
-  if (!response) {
+  // Empty state - no response yet
+  if (!response && !mcpResponse) {
     return (
       <div className="h-full flex flex-col items-center justify-center">
         <SendHorizontal className="w-12 h-12 text-neutral-300 dark:text-neutral-600 mb-4" />
@@ -154,97 +94,67 @@ export function ResponseViewer() {
     );
   }
 
-  const contentType = detectContentType(response.headers);
-
-  const renderContent = () => {
-    if (viewMode === 'raw' && contentType !== 'image' && contentType !== 'binary') {
-      return <TextViewer content={response.body} />;
-    }
-
-    switch (contentType) {
-      case 'json':
-        return <JsonViewer content={response.body} />;
-      case 'xml':
-        return <XmlViewer content={response.body} />;
-      case 'yaml':
-        return <YamlViewer content={response.body} />;
-      case 'sse':
-        return <EventStreamViewer content={response.body} />;
-      case 'image':
-        return <ImageViewer content={response.body} />;
-      case 'binary':
-        return <BinaryViewer content={response.body} />;
-      case 'text':
+  // Render protocol-specific viewer
+  const renderProtocolViewer = () => {
+    switch (protocol) {
+      case 'mcp':
+        if (mcpResponse?.result) {
+          // Determine if it's a tool or resource response based on response shape
+          const isToolResponse = 'content' in mcpResponse.result;
+          return (
+            <McpResponseViewer 
+              toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined} 
+              resourceResponse={!isToolResponse ? mcpResponse.result as McpReadResourceResponse : undefined} 
+            />
+          );
+        }
+        break;
+      case 'grpc':
+        if (response) {
+          return <GrpcResponseViewer response={response} />;
+        }
+        break;
+      case 'rest':
       default:
-        return <TextViewer content={response.body} />;
+        if (response) {
+          return <HttpResponseViewer response={response} />;
+        }
+        break;
     }
+    return null;
   };
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* View Controls */}
-      <div className="flex gap-2 shrink-0 mb-4">
-        {contentType !== 'binary' && contentType !== 'image' && (
-          <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
-            <button
-              onClick={() => setViewMode('pretty')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                viewMode === 'pretty'
-                  ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-                  : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
-              }`}
-            >
-              Pretty
-            </button>
-            <button
-              onClick={() => setViewMode('raw')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                viewMode === 'raw'
-                  ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-                  : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
-              }`}
-            >
-              Raw
-            </button>
-          </div>
-        )}
-        <button
-          onClick={() => setShowHeaders(!showHeaders)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-            showHeaders
-              ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-              : 'bg-neutral-100 dark:bg-white/5 text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
-          }`}
-        >
-          Headers ({Object.keys(response.headers).length})
-        </button>
-      </div>
-
-      {/* Headers Table */}
-      {showHeaders && (
-        <div className="bg-neutral-100 dark:bg-white/5 rounded-xl border border-neutral-200 dark:border-white/10 overflow-hidden shrink-0 mb-4">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-neutral-200 dark:border-white/10">
-                <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 dark:text-neutral-400">Header</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 dark:text-neutral-400">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(response.headers).map(([key, value]) => (
-                <tr key={key} className="border-b border-neutral-100 dark:border-white/5 last:border-0">
-                  <td className="px-4 py-2 font-mono text-xs text-neutral-600 dark:text-neutral-300">{key}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-neutral-500 dark:text-neutral-400">{value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Status Bar */}
+      {(response || mcpResponse) && (
+        <div className="flex items-center gap-3 mb-3 shrink-0">
+          {response && (
+            <>
+              <StatusBadge statusCode={response.statusCode} status={response.status} />
+              <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                <Clock size={12} />
+                <span>{formatDuration(response.duration)}</span>
+              </div>
+              {response.body && (
+                <div className="text-xs text-neutral-400 dark:text-neutral-500">
+                  {(response.body.size / 1024).toFixed(2)} KB
+                </div>
+              )}
+            </>
+          )}
+          {mcpResponse && (
+            <div className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+              <Clock size={12} />
+              <span>{formatDuration(mcpResponse.duration)}</span>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Body */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        {renderContent()}
+      {/* Protocol-specific viewer */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {renderProtocolViewer()}
       </div>
     </div>
   );

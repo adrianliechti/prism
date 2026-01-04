@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useClient } from '../../context/useClient';
 import { KeyValueEditor } from '../KeyValueEditor';
 import { JsonEditor } from '../JsonEditor';
@@ -55,12 +55,12 @@ function buildSchemaExample(schema: unknown): unknown {
 
 export function GrpcRequestPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('body');
-  const { request, setHeaders, setBody, setVariables } = useClient();
+  const { request, setGrpcBody, setGrpcMetadata, setVariables } = useClient();
 
-  const headers = request?.headers ?? [];
-  const body = request?.body ?? { type: 'json' as const, content: '' };
+  const metadata = request?.grpc?.metadata ?? [];
+  const bodyContent = request?.grpc?.body ?? '';
   const variables = request?.variables ?? [];
-  const grpcMethodSchema = request?.grpcMethodSchema;
+  const grpcMethodSchema = request?.grpc?.schema;
 
   const schemaSuggestion = useMemo(() => {
     try {
@@ -70,16 +70,9 @@ export function GrpcRequestPanel() {
     }
   }, [grpcMethodSchema]);
 
-  // Force JSON body type for gRPC
-  useEffect(() => {
-    if (body.type !== 'json') {
-      setBody({ type: 'json', content: '' });
-    }
-  }, [body.type, setBody]);
-
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'body', label: 'Message' },
-    { id: 'headers', label: 'Metadata', count: headers.filter(h => h.key).length },
+    { id: 'headers', label: 'Metadata', count: metadata.filter(h => h.key).length },
   ];
 
   return (
@@ -111,16 +104,16 @@ export function GrpcRequestPanel() {
 
       {/* Tab Content */}
       <div>
-        {activeTab === 'body' && body.type === 'json' && (
+        {activeTab === 'body' && (
           <JsonEditor
-            value={body.content}
-            onChange={(content) => setBody({ type: 'json', content })}
+            value={bodyContent}
+            onChange={setGrpcBody}
             variables={variables}
             onVariablesChange={setVariables}
             placeholder={schemaSuggestion ? JSON.stringify(schemaSuggestion, null, 2) : '{\n  "field": "value"\n}'}
             action={schemaSuggestion !== undefined ? {
               label: 'Insert schema',
-              onClick: () => setBody({ type: 'json', content: JSON.stringify(schemaSuggestion, null, 2) })
+              onClick: () => setGrpcBody(JSON.stringify(schemaSuggestion, null, 2))
             } : undefined}
           />
         )}
@@ -131,8 +124,8 @@ export function GrpcRequestPanel() {
               gRPC metadata (sent as headers)
             </p>
             <KeyValueEditor
-              items={headers}
-              onChange={setHeaders}
+              items={metadata}
+              onChange={setGrpcMetadata}
               keyPlaceholder="Key"
               valuePlaceholder="Value"
               keySuggestions={commonGrpcHeaders}

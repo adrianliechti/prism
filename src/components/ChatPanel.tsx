@@ -27,9 +27,10 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
   // Read response body text when available
   useEffect(() => {
     async function readResponseBody() {
-      if (request.httpResponse?.body) {
+      const httpResponse = request.http?.response;
+      if (httpResponse?.body) {
         try {
-          const text = await request.httpResponse.body.text();
+          const text = await httpResponse.body.text();
           setResponseBodyText(text);
         } catch {
           setResponseBodyText('(unable to read response body)');
@@ -39,7 +40,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
       }
     }
     readResponseBody();
-  }, [request.httpResponse?.body]);
+  }, [request.http?.response?.body]);
 
   // Create environment for tools
   const environment: RequestChatEnvironment = useMemo(() => ({

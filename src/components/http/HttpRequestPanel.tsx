@@ -79,9 +79,9 @@ export function HttpRequestPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('body');
   const { request, setHeaders, setQuery, setBody, setVariables } = useClient();
 
-  const headers = request?.headers ?? [];
-  const query = request?.query ?? [];
-  const body = request?.body ?? { type: 'none' as const };
+  const headers = request?.http?.headers ?? [];
+  const query = request?.http?.query ?? [];
+  const body = request?.http?.body ?? { type: 'none' as const };
   const variables = request?.variables ?? [];
 
   const handleBodyTypeChange = (type: BodyType) => {

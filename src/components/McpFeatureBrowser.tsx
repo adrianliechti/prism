@@ -61,16 +61,25 @@ function FeatureItem({ feature, type, isSelected, onSelect }: FeatureItemProps) 
 }
 
 export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
-  const { request, discoverMcpFeatures, setMcpSelectedTool, setMcpSelectedResource } = useClient();
+  const { request, discoverMcpFeatures, setMcpTool, setMcpResource } = useClient();
   const [activeTab, setActiveTab] = useState<'tools' | 'resources'>('tools');
+  const [features, setFeatures] = useState<{ tools: McpFeature[]; resources: McpFeature[]; error?: string } | null>(null);
+  const [isDiscovering, setIsDiscovering] = useState(false);
 
-  const features = request.mcpFeatures;
   const tools = features?.tools || [];
   const resources = features?.resources || [];
   const error = features?.error;
 
-  const handleDiscover = () => {
-    discoverMcpFeatures();
+  const handleDiscover = async () => {
+    setIsDiscovering(true);
+    try {
+      const result = await discoverMcpFeatures();
+      if (result) {
+        setFeatures(result);
+      }
+    } finally {
+      setIsDiscovering(false);
+    }
   };
 
   if (!features) {
@@ -81,7 +90,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
         </p>
         <button
           onClick={handleDiscover}
-          disabled={!request.url || request.executing}
+          disabled={!request.url || isDiscovering}
           className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Search className="w-4 h-4" />
@@ -99,7 +108,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
         </p>
         <button
           onClick={handleDiscover}
-          disabled={!request.url || request.executing}
+          disabled={!request.url || isDiscovering}
           className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RefreshCw className="w-4 h-4" />
@@ -138,7 +147,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
         <div className="flex-1" />
         <button
           onClick={handleDiscover}
-          disabled={request.executing}
+          disabled={isDiscovering}
           className="p-2 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 disabled:opacity-40"
           title="Refresh features"
         >
@@ -155,14 +164,14 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
                 No tools available
               </p>
             ) : (
-              tools.map((tool) => (
+              tools.map((tool: McpFeature) => (
                 <FeatureItem
                   key={tool.name}
                   feature={tool}
                   type="tool"
-                  isSelected={request.mcpSelectedTool === tool.name}
+                  isSelected={request.mcp?.tool?.name === tool.name}
                   onSelect={() => {
-                    setMcpSelectedTool(tool.name);
+                    setMcpTool({ name: tool.name, arguments: '{}' });
                     onSelected?.();
                   }}
                 />
@@ -177,14 +186,15 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
                 No resources available
               </p>
             ) : (
-              resources.map((resource) => (
+              resources.map((resource: McpFeature) => (
                 <FeatureItem
                   key={resource.name}
                   feature={resource}
                   type="resource"
-                  isSelected={request.mcpSelectedResource === resource.name}
+                  isSelected={request.mcp?.resource?.uri === (resource.schema?.uri as string || resource.name)}
                   onSelect={() => {
-                    setMcpSelectedResource(resource.name);
+                    const uri = resource.schema?.uri as string || resource.name;
+                    setMcpResource({ uri });
                     onSelected?.();
                   }}
                 />
@@ -195,10 +205,10 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
       </div>
 
       {/* Selected info */}
-      {(request.mcpSelectedTool || request.mcpSelectedResource) && (
+      {(request.mcp?.tool || request.mcp?.resource) && (
         <div className="border-t border-neutral-200 dark:border-white/10 p-2 shrink-0">
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            Selected: {request.mcpSelectedTool ? `Tool: ${request.mcpSelectedTool}` : `Resource: ${request.mcpSelectedResource}`}
+            Selected: {request.mcp?.tool ? `Tool: ${request.mcp.tool.name}` : `Resource: ${request.mcp?.resource?.uri}`}
           </div>
         </div>
       )}

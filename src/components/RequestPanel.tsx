@@ -69,7 +69,7 @@ export function RequestPanel() {
 
       {/* Response */}
       <div className="flex-1 pl-2 pr-3 py-2 flex flex-col min-h-0 overflow-hidden">
-        {request.httpResponse && (
+        {(request.http?.response || request.grpc?.response || request.mcp?.response) && (
           <h2 className="text-[10px] font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider mb-2 shrink-0">Response</h2>
         )}
         <div className="flex-1 min-h-0 overflow-hidden">

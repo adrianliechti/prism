@@ -11,35 +11,53 @@ import {
   type Protocol,
   type RequestBody,
   type Variable,
-  type ClientRequest,
-  type McpOperationType,
-  type McpListFeaturesResponse,
+  type HttpRequest,
   type McpCallToolResponse,
   type McpReadResourceResponse,
 } from '../lib/data';
+import type { McpListFeaturesResponse } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 
 function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
 }
 
-function createNewRequest(name?: string): Request {
-  return {
+function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
+  const base: Request = {
     id: generateId(),
     name: name || 'New Request',
-    protocol: 'rest',
-    method: 'GET',
+    protocol,
     url: '',
-    headers: [createEmptyKeyValue()],
-    query: [createEmptyKeyValue()],
-    body: { type: 'none' },
     variables: [],
     creationTime: Date.now(),
     executionTime: null,
-    httpRequest: null,
-    httpResponse: null,
     executing: false,
   };
+
+  switch (protocol) {
+    case 'grpc':
+      base.grpc = {
+        body: '',
+        metadata: [createEmptyKeyValue()],
+      };
+      break;
+    case 'mcp':
+      base.mcp = {};
+      break;
+    case 'rest':
+    default:
+      base.http = {
+        method: 'GET',
+        headers: [createEmptyKeyValue()],
+        query: [createEmptyKeyValue()],
+        body: { type: 'none' },
+        request: null,
+        response: null,
+      };
+      break;
+  }
+
+  return base;
 }
 
 interface ClientState {
@@ -62,19 +80,20 @@ interface ClientContextType {
   setQuery: (params: KeyValuePair[]) => void;
   setBody: (body: RequestBody) => void;
   setVariables: (variables: Variable[]) => void;
-  setOptions: (options: Partial<ClientRequest['options']>) => void;
+  setOptions: (options: Partial<HttpRequest['options']>) => void;
   executeRequest: () => Promise<void>;
   clearResponse: () => void;
   newRequest: () => void;
   
   // gRPC-specific actions
+  setGrpcBody: (body: string) => void;
+  setGrpcMetadata: (metadata: KeyValuePair[]) => void;
   setGrpcMethodSchema: (schema: Record<string, unknown> | undefined) => void;
   
   // MCP-specific actions
-  setMcpOperation: (operation: McpOperationType) => void;
-  setMcpSelectedTool: (tool: string | undefined) => void;
-  setMcpSelectedResource: (resource: string | undefined) => void;
-  discoverMcpFeatures: () => Promise<void>;
+  setMcpTool: (tool: { name: string; arguments: string } | undefined) => void;
+  setMcpResource: (resource: { uri: string } | undefined) => void;
+  discoverMcpFeatures: () => Promise<McpListFeaturesResponse | null>;
   
   // History actions
   loadFromHistory: (entry: Request) => void;
@@ -130,71 +149,149 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   // Request actions
   const setProtocol = useCallback((protocol: Protocol) => {
-    updateRequest({ protocol });
-  }, [updateRequest]);
+    // When changing protocol, preserve only URL and reset the protocol-specific data
+    setState(prev => {
+      const newReq = createNewRequest(prev.request.name, protocol);
+      newReq.id = prev.request.id;
+      newReq.url = prev.request.url;
+      return { ...prev, request: newReq };
+    });
+  }, []);
 
   const setMethod = useCallback((method: HttpMethod) => {
-    updateRequest({ method });
-  }, [updateRequest]);
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        http: { ...prev.request.http!, method },
+      },
+    }));
+  }, []);
 
   const setUrl = useCallback((url: string) => {
     updateRequest({ url });
   }, [updateRequest]);
 
   const setHeaders = useCallback((headers: KeyValuePair[]) => {
-    updateRequest({ headers });
-  }, [updateRequest]);
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        http: { ...prev.request.http!, headers },
+      },
+    }));
+  }, []);
 
   const setQuery = useCallback((query: KeyValuePair[]) => {
-    updateRequest({ query });
-  }, [updateRequest]);
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        http: { ...prev.request.http!, query },
+      },
+    }));
+  }, []);
 
   const setBody = useCallback((body: RequestBody) => {
-    updateRequest({ body });
-  }, [updateRequest]);
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        http: prev.request.http
+          ? { ...prev.request.http, body }
+          : { method: 'GET', headers: [], query: [], body, request: null, response: null },
+      },
+    }));
+  }, []);
 
   const setVariables = useCallback((variables: Variable[]) => {
     updateRequest({ variables });
   }, [updateRequest]);
 
-  const setOptions = useCallback((options: Partial<ClientRequest['options']>) => {
+  const setOptions = useCallback((options: Partial<HttpRequest['options']>) => {
     setState(prev => {
-      const currentOptions = prev.request.httpRequest?.options ?? { insecure: false, redirect: true };
+      const currentRequest = prev.request.http?.request;
+      const currentOptions = currentRequest?.options ?? { insecure: false, redirect: true };
       const newOptions = { ...currentOptions, ...options };
       return {
         ...prev,
         request: {
           ...prev.request,
-          httpRequest: prev.request.httpRequest
-            ? { ...prev.request.httpRequest, options: newOptions }
-            : null,
+          http: prev.request.http
+            ? {
+                ...prev.request.http,
+                request: currentRequest
+                  ? { ...currentRequest, options: newOptions }
+                  : null,
+              }
+            : undefined,
         },
       };
     });
   }, []);
 
   // gRPC-specific setters
-  const setGrpcMethodSchema = useCallback((grpcMethodSchema: Record<string, unknown> | undefined) => {
-    updateRequest({ grpcMethodSchema });
-  }, [updateRequest]);
+  const setGrpcBody = useCallback((body: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        grpc: prev.request.grpc
+          ? { ...prev.request.grpc, body }
+          : { body, metadata: [] },
+      },
+    }));
+  }, []);
+
+  const setGrpcMetadata = useCallback((metadata: KeyValuePair[]) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        grpc: prev.request.grpc
+          ? { ...prev.request.grpc, metadata }
+          : { body: '', metadata },
+      },
+    }));
+  }, []);
+
+  const setGrpcMethodSchema = useCallback((schema: Record<string, unknown> | undefined) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        grpc: prev.request.grpc
+          ? { ...prev.request.grpc, schema }
+          : { body: '', metadata: [], schema },
+      },
+    }));
+  }, []);
 
   // MCP-specific setters
-  const setMcpOperation = useCallback((mcpOperation: McpOperationType) => {
-    updateRequest({ mcpOperation });
-  }, [updateRequest]);
+  const setMcpTool = useCallback((tool: { name: string; arguments: string } | undefined) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        mcp: { tool, resource: undefined },
+      },
+    }));
+  }, []);
 
-  const setMcpSelectedTool = useCallback((mcpSelectedTool: string | undefined) => {
-    updateRequest({ mcpSelectedTool, mcpSelectedResource: undefined });
-  }, [updateRequest]);
-
-  const setMcpSelectedResource = useCallback((mcpSelectedResource: string | undefined) => {
-    updateRequest({ mcpSelectedResource, mcpSelectedTool: undefined });
-  }, [updateRequest]);
+  const setMcpResource = useCallback((resource: { uri: string } | undefined) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        mcp: { resource, tool: undefined },
+      },
+    }));
+  }, []);
 
   // Discover MCP features from server
-  const discoverMcpFeatures = useCallback(async () => {
+  const discoverMcpFeatures = useCallback(async (): Promise<McpListFeaturesResponse | null> => {
     const req = state.request;
-    if (!req.url) return;
+    if (!req.url) return null;
 
     updateRequest({ executing: true });
 
@@ -210,27 +307,46 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
       const features: McpListFeaturesResponse = await response.json();
-      updateRequest({ 
-        mcpFeatures: features, 
-        executing: false,
-        mcpOperation: 'discover',
-      });
+      updateRequest({ executing: false });
+      return features;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      updateRequest({ 
-        executing: false,
-        mcpFeatures: {
-          tools: [],
-          resources: [],
-          error: errorMessage,
-        },
-      });
+      updateRequest({ executing: false });
+      return { tools: [], resources: [], error: errorMessage };
     }
-  }, [state.request, updateRequest]);
+  }, [state.request, updateRequest, buildMcpProxyPath]);
 
   const clearResponse = useCallback(() => {
-    updateRequest({ httpResponse: null });
-  }, [updateRequest]);
+    setState(prev => {
+      const { protocol } = prev.request;
+      if (protocol === 'grpc' && prev.request.grpc) {
+        return {
+          ...prev,
+          request: {
+            ...prev.request,
+            grpc: { ...prev.request.grpc, response: undefined },
+          },
+        };
+      } else if (protocol === 'mcp' && prev.request.mcp) {
+        return {
+          ...prev,
+          request: {
+            ...prev.request,
+            mcp: { ...prev.request.mcp, response: undefined },
+          },
+        };
+      } else if (prev.request.http) {
+        return {
+          ...prev,
+          request: {
+            ...prev.request,
+            http: { ...prev.request.http, response: null },
+          },
+        };
+      }
+      return prev;
+    });
+  }, []);
 
   const executeRequest = useCallback(async () => {
     const req = state.request;
@@ -238,12 +354,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     updateRequest({ executing: true });
 
     try {
-      // Build headers
-      const headersObj: Record<string, string> = {};
-      req.headers.filter(h => h.enabled && h.key).forEach(h => {
-        headersObj[h.key] = h.value;
-      });
-
       // gRPC mode
       if (req.protocol === 'grpc') {
         // Parse grpc://host/service/method URL
@@ -254,33 +364,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
         const [, grpcHost, grpcService, grpcMethod] = match;
 
-        // gRPC always uses JSON body
-        let body = '';
-        let bodyForHistory = '';
-        
-        if (req.body.type === 'json') {
-          body = resolveVariables(req.body.content, req.variables);
-          bodyForHistory = req.body.content;
-        } else {
-          body = '{}';
-          bodyForHistory = '{}';
-        }
+        // gRPC uses its own body field
+        const grpcBody = req.grpc?.body ?? '{}';
+        const body = resolveVariables(grpcBody, req.variables);
 
-        if (!headersObj['Content-Type']) {
-          headersObj['Content-Type'] = 'application/json';
-        }
+        // Build headers from metadata
+        const headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
+        (req.grpc?.metadata ?? []).filter((h: KeyValuePair) => h.enabled && h.key).forEach((h: KeyValuePair) => {
+          headersObj[h.key] = h.value;
+        });
 
         // Build gRPC proxy URL: /proxy/grpc/{host}/{service}/{method}
         const proxyUrl = `/proxy/grpc/${grpcHost}/${grpcService}/${grpcMethod}`;
-
-        const clientRequest: ClientRequest = {
-          method: 'POST',
-          url: grpcUrl,
-          headers: headersObj,
-          query: {},
-          body: bodyForHistory,
-          options: { insecure: false, redirect: false },
-        };
 
         const startTime = performance.now();
         const response = await fetch(proxyUrl, {
@@ -290,27 +385,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         });
         const duration = Math.round(performance.now() - startTime);
 
-        const responseBody = await response.blob();
-        const responseHeaders: Record<string, string> = {};
+        const responseBody = await response.text();
+        const responseMetadata: Record<string, string> = {};
         response.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
+          responseMetadata[key] = value;
         });
-
-        const clientResponse = {
-          status: response.statusText || String(response.status),
-          statusCode: response.status,
-          headers: responseHeaders,
-          body: responseBody,
-          duration,
-        };
 
         const executionTime = Date.now();
         const updatedRequest: Request = {
           ...req,
           executionTime,
-          httpRequest: clientRequest,
-          httpResponse: clientResponse,
           executing: false,
+          grpc: {
+            ...req.grpc,
+            body: grpcBody,
+            metadata: req.grpc?.metadata ?? [],
+            response: {
+              body: responseBody,
+              metadata: responseMetadata,
+              duration,
+              error: response.ok ? undefined : `HTTP ${response.status}`,
+            },
+          },
         };
 
         // Save to collection (TanStack DB handles persistence)
@@ -339,18 +435,15 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
 
         const startTime = performance.now();
-        let responseBody: Blob;
-        let responseHeaders: Record<string, string> = {};
-        let statusCode = 200;
-        let status = 'OK';
+        let mcpResult: McpCallToolResponse | McpReadResourceResponse | undefined;
 
-        // Determine what to execute based on selected tool/resource
-        if (req.mcpSelectedTool) {
-          // Call a tool
+        // Determine what to execute based on tool/resource
+        if (req.mcp?.tool) {
+          // Call a tool - arguments are stored in tool.arguments as JSON string
           let args: Record<string, unknown> = {};
-          if (req.body.type === 'json' && req.body.content) {
+          if (req.mcp.tool.arguments) {
             try {
-              args = JSON.parse(req.body.content);
+              args = JSON.parse(req.mcp.tool.arguments);
             } catch {
               // Ignore parse errors, use empty args
             }
@@ -362,97 +455,51 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const response = await fetch(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: req.mcpSelectedTool, arguments: args }),
+            body: JSON.stringify({ name: req.mcp.tool.name, arguments: args }),
           });
 
-          statusCode = response.status;
-          status = response.statusText || String(response.status);
-          response.headers.forEach((value, key) => {
-            responseHeaders[key.toLowerCase()] = value;
-          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
           const result: McpCallToolResponse = await response.json();
-          
-          const updatedReq: Partial<Request> = {
-            mcpToolResponse: result,
-          };
-
-          // Convert result to blob for display
-          responseBody = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
-          
-          updateRequest(updatedReq);
-        } else if (req.mcpSelectedResource) {
-          // Read a resource - get URI from the feature schema
-          const resourceFeature = req.mcpFeatures?.resources.find(r => r.name === req.mcpSelectedResource);
-          const uri = resourceFeature?.schema?.uri as string || req.mcpSelectedResource;
-
+          mcpResult = result;
+        } else if (req.mcp?.resource) {
+          // Read a resource
           const path = buildMcpProxyPath(serverUrl, 'resource/call');
           if (!path) throw new Error('Invalid MCP server URL');
 
           const response = await fetch(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uri }),
+            body: JSON.stringify({ uri: req.mcp.resource.uri }),
           });
 
-          statusCode = response.status;
-          status = response.statusText || String(response.status);
-          response.headers.forEach((value, key) => {
-            responseHeaders[key.toLowerCase()] = value;
-          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP ${response.status}`);
+          }
+
           const result: McpReadResourceResponse = await response.json();
-
-          const updatedReq: Partial<Request> = {
-            mcpResourceResponse: result,
-          };
-
-          // Convert result to blob for display
-          responseBody = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
-          
-          updateRequest(updatedReq);
+          mcpResult = result;
         } else {
-          // Just discover features if nothing selected
-          const path = buildMcpProxyPath(serverUrl, 'features');
-          if (!path) throw new Error('Invalid MCP server URL');
-
-          const response = await fetch(path);
-          statusCode = response.status;
-          status = response.statusText || String(response.status);
-          response.headers.forEach((value, key) => {
-            responseHeaders[key.toLowerCase()] = value;
-          });
-          const features: McpListFeaturesResponse = await response.json();
-          
-          updateRequest({ mcpFeatures: features, mcpOperation: 'discover' });
-          responseBody = new Blob([JSON.stringify(features, null, 2)], { type: 'application/json' });
+          throw new Error('No tool or resource selected');
         }
 
         const duration = Math.round(performance.now() - startTime);
-
-        const clientRequest: ClientRequest = {
-          method: 'POST',
-          url: serverUrl,
-          headers: {},
-          query: {},
-          body: req.mcpSelectedTool ? JSON.stringify({ name: req.mcpSelectedTool }) : '',
-          options: { insecure: false, redirect: false },
-        };
-
-        const clientResponse = {
-          status,
-          statusCode,
-          headers: responseHeaders,
-          body: responseBody,
-          duration,
-        };
-
         const executionTime = Date.now();
         const updatedRequest: Request = {
           ...req,
-          ...state.request, // Include any updates made during execution
           executionTime,
-          httpRequest: clientRequest,
-          httpResponse: clientResponse,
           executing: false,
+          mcp: {
+            ...req.mcp,
+            response: {
+              result: mcpResult,
+              duration,
+            },
+          },
         };
 
         // Save to collection
@@ -474,24 +521,32 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
 
       // REST mode
+      // Build headers
+      const headersObj: Record<string, string> = {};
+      (req.http?.headers ?? []).filter((h: KeyValuePair) => h.enabled && h.key).forEach((h: KeyValuePair) => {
+        headersObj[h.key] = h.value;
+      });
+
       // Build query string
       const queryParams = new URLSearchParams();
-      req.query.filter(p => p.enabled && p.key).forEach(p => {
+      const httpMethod = req.http?.method ?? 'GET';
+      (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key).forEach((p: KeyValuePair) => {
         queryParams.append(p.key, p.value);
       });
 
-      // Build body based on type
+      // Build body based on type (from http.body)
+      const httpBody = req.http?.body ?? { type: 'none' as const };
       let body: string | FormData | Blob | undefined;
       let bodyForHistory: string = '';
       let useFormData = false;
       
-      switch (req.body.type) {
+      switch (httpBody.type) {
         case 'json': {
           // Resolve variables in JSON content
-          const resolvedContent = resolveVariables(req.body.content, req.variables);
+          const resolvedContent = resolveVariables(httpBody.content, req.variables);
           
           body = resolvedContent;
-          bodyForHistory = req.body.content; // Store original with markers
+          bodyForHistory = httpBody.content; // Store original with markers
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'application/json';
           }
@@ -499,7 +554,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
         case 'form-urlencoded': {
           const formParams = new URLSearchParams();
-          req.body.data.filter(f => f.enabled && f.key).forEach(f => {
+          httpBody.data.filter((f: { enabled: boolean; key: string; value: string }) => f.enabled && f.key).forEach((f: { key: string; value: string }) => {
             formParams.append(f.key, f.value);
           });
           body = formParams.toString();
@@ -512,7 +567,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         case 'form-data': {
           const formData = new FormData();
           const formDescription: string[] = [];
-          req.body.data.filter(f => f.enabled && f.key).forEach(f => {
+          httpBody.data.filter((f: { enabled: boolean; key: string }) => f.enabled && f.key).forEach((f: { type: string; key: string; value: string; file?: File | null; fileName?: string }) => {
             if (f.type === 'file' && f.file) {
               formData.append(f.key, f.file, f.fileName);
               formDescription.push(`${f.key}: [File: ${f.fileName}]`);
@@ -528,18 +583,18 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           break;
         }
         case 'binary': {
-          if (req.body.file) {
-            body = req.body.file;
-            bodyForHistory = `[Binary file: ${req.body.fileName}]`;
+          if (httpBody.file) {
+            body = httpBody.file;
+            bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
             if (!headersObj['Content-Type']) {
-              headersObj['Content-Type'] = (req.body.file as File).type || 'application/octet-stream';
+              headersObj['Content-Type'] = (httpBody.file as File).type || 'application/octet-stream';
             }
           }
           break;
         }
         case 'raw':
-          body = req.body.content;
-          bodyForHistory = req.body.content;
+          body = httpBody.content;
+          bodyForHistory = httpBody.content;
           if (!headersObj['Content-Type']) {
             headersObj['Content-Type'] = 'text/plain';
           }
@@ -547,7 +602,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
 
       // Get options
-      const options = req.httpRequest?.options ?? { insecure: false, redirect: true };
+      const options = req.http?.request?.options ?? { insecure: false, redirect: true };
 
       // Add proxy headers for options
       if (options.insecure) {
@@ -566,8 +621,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
 
       // Store the request for history (without file objects)
-      const clientRequest: ClientRequest = {
-        method: req.method,
+      const clientRequest: HttpRequest = {
+        method: httpMethod,
         url: req.url,
         headers: headersObj,
         query: Object.fromEntries(queryParams),
@@ -584,9 +639,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
       const startTime = performance.now();
       const response = await fetch(proxyUrl, {
-        method: req.method,
+        method: httpMethod,
         headers: fetchHeaders,
-        body: body && req.method !== 'GET' && req.method !== 'HEAD' ? body : undefined,
+        body: body && httpMethod !== 'GET' && httpMethod !== 'HEAD' ? body : undefined,
       });
       const duration = Math.round(performance.now() - startTime);
 
@@ -613,9 +668,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const updatedRequest: Request = {
         ...req,
         executionTime,
-        httpRequest: clientRequest,
-        httpResponse: clientResponse,
         executing: false,
+        http: {
+          ...req.http!,
+          request: clientRequest,
+          response: clientResponse,
+        },
       };
       
       // Save to collection (TanStack DB handles persistence)
@@ -637,78 +695,139 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const executionTime = Date.now();
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       
-      // Create error response
-      const errorResponse = {
-        status: '',
-        statusCode: 0,
-        headers: {},
-        body: new Blob(),
-        duration: 0,
-        error: errorMessage,
-      };
-      
-      const updatedRequest: Request = {
-        ...req,
-        executionTime,
-        httpResponse: errorResponse,
-        executing: false,
-      };
-      
-      // Save to collection
-      const existingInHistory = history.find(h => h.id === req.id);
-      if (existingInHistory) {
-        requestsCollection.update(req.id, (draft) => {
-          Object.assign(draft, updatedRequest);
-        });
-      } else {
-        requestsCollection.insert(updatedRequest);
-      }
+      // Create error response based on protocol
+      if (req.protocol === 'grpc') {
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          executing: false,
+          grpc: {
+            ...req.grpc!,
+            response: {
+              body: '',
+              duration: 0,
+              error: errorMessage,
+            },
+          },
+        };
+        
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
 
-      setState(prev => ({
-        ...prev,
-        request: updatedRequest,
-      }));
+        setState(prev => ({ ...prev, request: updatedRequest }));
+      } else if (req.protocol === 'mcp') {
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          executing: false,
+          mcp: {
+            ...req.mcp,
+            response: {
+              result: undefined,
+              duration: 0,
+              error: errorMessage,
+            },
+          },
+        };
+        
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
+
+        setState(prev => ({ ...prev, request: updatedRequest }));
+      } else {
+        // HTTP error response
+        const errorResponse = {
+          status: '',
+          statusCode: 0,
+          headers: {},
+          body: new Blob(),
+          duration: 0,
+          error: errorMessage,
+        };
+        
+        const updatedRequest: Request = {
+          ...req,
+          executionTime,
+          executing: false,
+          http: {
+            ...req.http!,
+            response: errorResponse,
+          },
+        };
+        
+        const existingInHistory = history.find(h => h.id === req.id);
+        if (existingInHistory) {
+          requestsCollection.update(req.id, (draft) => {
+            Object.assign(draft, updatedRequest);
+          });
+        } else {
+          requestsCollection.insert(updatedRequest);
+        }
+
+        setState(prev => ({ ...prev, request: updatedRequest }));
+      }
     }
-  }, [state.request, updateRequest, history]);
+  }, [state.request, updateRequest, history, buildMcpProxyPath]);
 
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
-    const newReq = createNewRequest();
+    const newReq = createNewRequest(entry.name, entry.protocol ?? 'rest');
     // Preserve the original entry's ID so re-executing updates the history entry
     newReq.id = entry.id;
-    newReq.name = entry.name;
-    newReq.protocol = entry.protocol ?? 'rest';
-    newReq.method = entry.method;
     newReq.url = entry.url;
-    newReq.headers = entry.headers.map(h => ({ ...h, id: generateId() }));
-    newReq.query = entry.query.map(p => ({ ...p, id: generateId() }));
+    newReq.executionTime = entry.executionTime;
     // Clone variables with new IDs
     newReq.variables = (entry.variables ?? []).map(v => ({ ...v, id: generateId() }));
-    // Clone body with new IDs for form data
-    if (entry.body.type === 'form-urlencoded') {
-      newReq.body = {
-        type: 'form-urlencoded',
-        data: entry.body.data.map(f => ({ ...f, id: generateId() })),
+    
+    // Restore protocol-specific fields
+    if (entry.http) {
+      newReq.http = {
+        method: entry.http.method,
+        headers: entry.http.headers.map((h: KeyValuePair) => ({ ...h, id: generateId() })),
+        query: entry.http.query.map((p: KeyValuePair) => ({ ...p, id: generateId() })),
+        body: entry.http.body,
+        request: entry.http.request,
+        response: entry.http.response,
       };
-    } else if (entry.body.type === 'form-data') {
-      newReq.body = {
-        type: 'form-data',
-        // Note: File objects can't be serialized to localStorage, so files will be lost
-        data: entry.body.data.map(f => ({ ...f, id: generateId(), file: null })),
+      // Clone body with new IDs for form data
+      if (entry.http.body.type === 'form-urlencoded') {
+        newReq.http.body = {
+          type: 'form-urlencoded',
+          data: entry.http.body.data.map(f => ({ ...f, id: generateId() })),
+        };
+      } else if (entry.http.body.type === 'form-data') {
+        newReq.http.body = {
+          type: 'form-data',
+          // Note: File objects can't be serialized, so files will be lost
+          data: entry.http.body.data.map(f => ({ ...f, id: generateId(), file: null })),
+        };
+      } else if (entry.http.body.type === 'binary') {
+        // Binary files can't be restored from history (can't serialize File objects)
+        newReq.http.body = { type: 'binary', file: null, fileName: entry.http.body.fileName };
+      }
+    }
+    if (entry.grpc) {
+      newReq.grpc = {
+        body: entry.grpc.body,
+        metadata: (entry.grpc.metadata ?? []).map((m: KeyValuePair) => ({ ...m, id: generateId() })),
+        schema: entry.grpc.schema,
+        response: entry.grpc.response,
       };
-    } else if (entry.body.type === 'binary') {
-      // Binary files can't be restored from history (can't serialize File objects)
-      newReq.body = { type: 'binary', file: null, fileName: entry.body.fileName };
-    } else {
-      newReq.body = entry.body;
     }
-    // Preserve httpRequest options if available
-    if (entry.httpRequest) {
-      newReq.httpRequest = { ...entry.httpRequest };
-    }
-    // Restore the response from history
-    if (entry.httpResponse) {
-      newReq.httpResponse = entry.httpResponse;
+    if (entry.mcp) {
+      newReq.mcp = { ...entry.mcp };
     }
     
     setState(prev => ({
@@ -756,10 +875,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     executeRequest,
     clearResponse,
     newRequest,
+    setGrpcBody,
+    setGrpcMetadata,
     setGrpcMethodSchema,
-    setMcpOperation,
-    setMcpSelectedTool,
-    setMcpSelectedResource,
+    setMcpTool,
+    setMcpResource,
     discoverMcpFeatures,
     loadFromHistory,
     clearHistory,

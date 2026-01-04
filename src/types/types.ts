@@ -1,5 +1,3 @@
-import type { ClientRequest, ClientResponse } from './client';
-
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
 export type Protocol = 'rest' | 'grpc' | 'mcp';
@@ -25,10 +23,17 @@ export interface McpCallToolRequest {
 }
 
 export interface McpContent {
-  type: 'text' | 'image' | 'audio';
+  type: 'text' | 'image' | 'audio' | 'resource';
   text?: string;
   data?: string; // base64 encoded for image/audio
   mimeType?: string;
+  // For resource type (embedded resources)
+  resource?: {
+    uri: string;
+    text?: string;
+    blob?: string;
+    mimeType?: string;
+  };
 }
 
 export interface McpCallToolResponse {
@@ -91,29 +96,77 @@ export interface FormDataField {
   fileName: string; // display name for file
 }
 
+// HTTP request/response (stored in history for reference)
+export interface HttpRequest {
+  method: string;
+  url: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  body: string;
+  options: {
+    insecure: boolean;
+    redirect: boolean;
+  };
+}
+
+export interface HttpResponse {
+  status: string;
+  statusCode: number;
+  headers: Record<string, string>;
+  body: Blob;
+  duration: number;
+  error?: string;
+}
+
+// Protocol-specific request data types
+export interface HttpRequestData {
+  method: HttpMethod;
+  query: KeyValuePair[];
+  headers: KeyValuePair[];
+  body: RequestBody;
+  request: HttpRequest | null;
+  response: HttpResponse | null;
+}
+
+export interface GrpcRequestData {
+  schema?: Record<string, unknown>; // Optional schema for IDE hints/validation
+  body: string; // JSON message content
+  metadata: KeyValuePair[]; // gRPC metadata (headers)
+  response?: {
+    body: string;
+    metadata?: Record<string, string>;
+    duration: number;
+    error?: string;
+  };
+}
+
+export interface McpRequestData {
+  tool?: {
+    name: string;
+    arguments: string; // JSON parameters
+  };
+  resource?: {
+    uri: string;
+  };
+  response?: {
+    result?: McpCallToolResponse | McpReadResourceResponse;
+    duration: number;
+    error?: string;
+  };
+}
+
 // Request data (editable) with execution state
 export interface Request {
   id: string;
   name: string;
   protocol: Protocol;
-  method: HttpMethod;
   url: string;
-  query: KeyValuePair[];
-  headers: KeyValuePair[];
-  body: RequestBody;
   variables: Variable[];
   creationTime: number;
   executionTime: number | null;
-  httpRequest: ClientRequest | null;
-  httpResponse: ClientResponse | null;
   executing: boolean;
-  // gRPC-specific fields
-  grpcMethodSchema?: Record<string, unknown>;
-  // MCP-specific fields
-  mcpOperation?: McpOperationType;
-  mcpSelectedTool?: string;
-  mcpSelectedResource?: string;
-  mcpFeatures?: McpListFeaturesResponse;
-  mcpToolResponse?: McpCallToolResponse;
-  mcpResourceResponse?: McpReadResourceResponse;
+  // Protocol-specific data (one populated based on protocol)
+  http?: HttpRequestData;
+  grpc?: GrpcRequestData;
+  mcp?: McpRequestData;
 }

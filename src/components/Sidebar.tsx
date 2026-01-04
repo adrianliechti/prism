@@ -53,14 +53,14 @@ function getDisplayMethod(entry: Request): string {
   if (entry.protocol === 'grpc') {
     return 'gRPC';
   }
-  return entry.method;
+  return entry.http?.method ?? 'GET';
 }
 
 function getMethodColor(entry: Request): string {
   if (entry.protocol === 'grpc') {
     return 'text-cyan-600 dark:text-cyan-400';
   }
-  return methodColors[entry.method];
+  return methodColors[entry.http?.method ?? 'GET'];
 }
 
 interface HostGroup {
@@ -145,7 +145,11 @@ export function Sidebar() {
                       onClick={() => loadFromHistory(entry)}
                     >
                       <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entry.httpResponse?.statusCode ?? null)}`}
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(
+                          entry.http?.response?.statusCode ?? 
+                          (entry.grpc?.response?.error ? 0 : entry.grpc?.response ? 200 : null) ??
+                          (entry.mcp?.response?.error ? 0 : entry.mcp?.response ? 200 : null)
+                        )}`}
                       />
                       <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>
                         {getDisplayMethod(entry)}

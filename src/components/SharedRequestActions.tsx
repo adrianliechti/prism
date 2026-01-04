@@ -22,14 +22,13 @@ export function SharedRequestActions() {
 
   const { host: grpcHost, service: grpcService, method: grpcMethod } = parseGrpcUrl(url);
 
-  const mcpSelectedTool = request?.mcpSelectedTool;
-  const mcpSelectedResource = request?.mcpSelectedResource;
+  const mcpHasToolOrResource = !!request?.mcp?.tool || !!request?.mcp?.resource;
 
   // Check if we can execute
   const canExecute = protocol === 'rest'
     ? url.length > 0
     : protocol === 'mcp'
-      ? url.length > 0 && (mcpSelectedTool || mcpSelectedResource)
+      ? url.length > 0 && mcpHasToolOrResource
       : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
 
   const handleSubmit = () => {

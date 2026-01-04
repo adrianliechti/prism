@@ -4,11 +4,11 @@ import { ChevronDown, Wrench, FileText } from 'lucide-react';
 import { McpFeatureBrowser } from '../McpFeatureBrowser';
 
 export function McpRequestBar() {
-  const { request, setUrl, discoverMcpFeatures } = useClient();
+  const { request, setUrl } = useClient();
 
   const url = request?.url ?? '';
-  const selectedTool = request?.mcpSelectedTool;
-  const selectedResource = request?.mcpSelectedResource;
+  const selectedTool = request?.mcp?.tool?.name;
+  const selectedResource = request?.mcp?.resource?.uri;
 
   const [featureMenuOpen, setFeatureMenuOpen] = useState(false);
   const featureMenuRef = useRef<HTMLDivElement | null>(null);
@@ -26,9 +26,6 @@ export function McpRequestBar() {
   }, [featureMenuOpen]);
 
   const handleOpenFeatureMenu = () => {
-    if (url) {
-      discoverMcpFeatures();
-    }
     setFeatureMenuOpen(true);
   };
 

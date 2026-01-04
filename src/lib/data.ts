@@ -8,12 +8,14 @@ import type {
   HttpMethod,
   Protocol,
   Variable,
-  McpOperationType,
-  McpListFeaturesResponse,
   McpCallToolResponse,
   McpReadResourceResponse,
+  HttpRequestData,
+  GrpcRequestData,
+  McpRequestData,
+  HttpRequest,
+  HttpResponse,
 } from '../types/types';
-import type { ClientRequest, ClientResponse } from '../types/client';
 
 // Re-export types for consumers
 export type {
@@ -23,12 +25,13 @@ export type {
   HttpMethod,
   Protocol,
   Variable,
-  ClientRequest,
-  ClientResponse,
-  McpOperationType,
-  McpListFeaturesResponse,
+  HttpRequest,
+  HttpResponse,
   McpCallToolResponse,
   McpReadResourceResponse,
+  HttpRequestData,
+  GrpcRequestData,
+  McpRequestData,
 };
 
 // Shared utility for generating unique IDs
@@ -40,31 +43,66 @@ export function generateId(): string {
 // Serialization Types (internal)
 // ============================================================================
 
-interface SerializedResponse {
-  status: string;
-  statusCode: number;
-  headers: Record<string, string>;
-  content: string;
-  contentType: string;
-  duration: number;
-  error?: string;
-}
-
-interface SerializedRequest {
-  id: string;
-  name: string;
-  protocol: Protocol;
+// HTTP-specific settings
+interface HttpSettings {
   method: HttpMethod;
   url: string;
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;
+  response?: {
+    status: string;
+    statusCode: number;
+    headers: Record<string, string>;
+    body: string;        // base64 encoded
+    bodyType: string;
+    duration: number;
+    error?: string;
+  };
+}
+
+// gRPC-specific settings
+interface GrpcSettings {
+  server: string;      // host:port
+  service: string;     // service name
+  method: string;      // method name
+  schema?: Record<string, unknown>;
+  body: string;        // JSON request body
+  response?: {
+    body: string;      // JSON response (plain text, not base64)
+    metadata?: Record<string, string>;
+    duration: number;
+    error?: string;
+  };
+}
+
+// MCP-specific settings
+interface McpSettings {
+  url: string;         // MCP server URL
+  tool?: {
+    name: string;
+    arguments: string; // JSON parameters
+  };
+  resource?: {
+    uri: string;
+  };
+  response?: {
+    result?: McpCallToolResponse | McpReadResourceResponse;
+    duration: number;
+    error?: string;
+  };
+}
+
+interface SerializedRequest {
+  id: string;
+  name: string;
   variables: Variable[];
   creationTime: number;
   executionTime: number | null;
-  httpRequest: ClientRequest | null;
-  httpResponse: SerializedResponse | null;
-  executing: boolean;
+  // Protocol-specific settings (exactly one will be populated)
+  http?: HttpSettings;
+  grpc?: GrpcSettings;
+  mcp?: McpSettings;
 }
 
 // ============================================================================
@@ -98,91 +136,159 @@ function base64ToBlob(base64: string, type: string): Blob {
 // Serialization / Deserialization
 // ============================================================================
 
+// Parse gRPC URL: grpc://host:port/service/method
+function parseGrpcUrl(url: string): { server: string; service: string; method: string } {
+  const match = url.match(/^grpc:\/\/([^/]+)\/(.+)\/([^/]+)$/);
+  if (match) {
+    return { server: match[1], service: match[2], method: match[3] };
+  }
+  return { server: url.replace(/^grpc:\/\//, ''), service: '', method: '' };
+}
+
+// Build gRPC URL from components
+function buildGrpcUrl(server: string, service: string, method: string): string {
+  if (service && method) {
+    return `grpc://${server}/${service}/${method}`;
+  }
+  return `grpc://${server}`;
+}
+
 async function serializeRequest(req: Request): Promise<SerializedRequest> {
-  // Handle body serialization - strip File objects
-  let body = req.body;
-  if (req.body.type === 'form-data') {
-    body = {
-      ...req.body,
-      data: req.body.data.map((f) => ({ ...f, file: null })),
-    };
-  } else if (req.body.type === 'binary') {
-    body = { ...req.body, file: null };
-  }
-
-  // Handle response body serialization (Blob -> base64)
-  let httpResponse: SerializedResponse | null = null;
-  if (req.httpResponse) {
-    const content =
-      req.httpResponse.body instanceof Blob ? await blobToBase64(req.httpResponse.body) : '';
-    const contentType =
-      req.httpResponse.body instanceof Blob
-        ? req.httpResponse.body.type
-        : 'application/octet-stream';
-
-    httpResponse = {
-      status: req.httpResponse.status,
-      statusCode: req.httpResponse.statusCode,
-      headers: req.httpResponse.headers,
-      content,
-      contentType,
-      duration: req.httpResponse.duration,
-      error: req.httpResponse.error,
-    };
-  }
-
-  return {
+  const base: SerializedRequest = {
     id: req.id,
     name: req.name,
-    protocol: req.protocol,
-    method: req.method,
-    url: req.url,
-    query: req.query,
-    headers: req.headers,
-    body: body as RequestBody,
-    variables: req.variables,
+    variables: req.variables ?? [],
     creationTime: req.creationTime,
     executionTime: req.executionTime,
-    httpRequest: req.httpRequest,
-    httpResponse,
-    executing: false,
   };
+
+  switch (req.protocol) {
+    case 'grpc': {
+      const { server, service, method } = parseGrpcUrl(req.url);
+      
+      base.grpc = {
+        server,
+        service,
+        method,
+        schema: req.grpc?.schema,
+        body: req.grpc?.body ?? '',
+        response: req.grpc?.response,
+      };
+      break;
+    }
+    case 'mcp': {
+      base.mcp = {
+        url: req.url,
+        tool: req.mcp?.tool,
+        resource: req.mcp?.resource,
+        response: req.mcp?.response,
+      };
+      break;
+    }
+    case 'rest':
+    default: {
+      // Handle body serialization - strip File objects
+      let body = req.http?.body ?? { type: 'none' as const };
+      if (body.type === 'form-data') {
+        body = {
+          ...body,
+          data: body.data.map((f) => ({ ...f, file: null })),
+        };
+      } else if (body.type === 'binary') {
+        body = { ...body, file: null };
+      }
+
+      // Serialize HTTP response with base64 body
+      let httpResponse: HttpSettings['response'];
+      if (req.http?.response) {
+        const responseBody = req.http.response.body instanceof Blob 
+          ? await blobToBase64(req.http.response.body) 
+          : '';
+        const bodyType = req.http.response.body instanceof Blob 
+          ? req.http.response.body.type 
+          : 'application/octet-stream';
+        
+        httpResponse = {
+          status: req.http.response.status,
+          statusCode: req.http.response.statusCode,
+          headers: req.http.response.headers,
+          body: responseBody,
+          bodyType,
+          duration: req.http.response.duration,
+          error: req.http.response.error,
+        };
+      }
+
+      base.http = {
+        method: req.http?.method ?? 'GET',
+        url: req.url,
+        query: req.http?.query ?? [],
+        headers: req.http?.headers ?? [],
+        body: body as RequestBody,
+        response: httpResponse,
+      };
+      break;
+    }
+  }
+
+  return base;
 }
 
 function deserializeRequest(serialized: SerializedRequest): Request {
-  // Reconstruct Blob from base64
-  let httpResponse: ClientResponse | null = null;
-  if (serialized.httpResponse) {
-    const body = serialized.httpResponse.content
-      ? base64ToBlob(serialized.httpResponse.content, serialized.httpResponse.contentType)
-      : new Blob([]);
+  // Infer protocol from which settings object is present
+  const protocol: Protocol = serialized.grpc ? 'grpc' : serialized.mcp ? 'mcp' : 'rest';
 
-    httpResponse = {
-      status: serialized.httpResponse.status,
-      statusCode: serialized.httpResponse.statusCode,
-      headers: serialized.httpResponse.headers,
-      body,
-      duration: serialized.httpResponse.duration,
-      error: serialized.httpResponse.error,
-    };
-  }
-
-  return {
+  const base: Request = {
     id: serialized.id,
     name: serialized.name,
-    protocol: serialized.protocol ?? 'rest',
-    method: serialized.method,
-    url: serialized.url,
-    query: serialized.query,
-    headers: serialized.headers,
-    body: serialized.body,
+    protocol,
+    url: '',
     variables: serialized.variables ?? [],
     creationTime: serialized.creationTime,
     executionTime: serialized.executionTime,
-    httpRequest: serialized.httpRequest,
-    httpResponse,
     executing: false,
   };
+
+  if (serialized.grpc) {
+    const grpc = serialized.grpc;
+    base.url = buildGrpcUrl(grpc.server, grpc.service, grpc.method);
+    base.grpc = {
+      schema: grpc.schema,
+      body: grpc.body || '',
+      metadata: [],
+      response: grpc.response,
+    };
+  } else if (serialized.mcp) {
+    const mcp = serialized.mcp;
+    base.url = mcp.url;
+    base.mcp = {
+      tool: mcp.tool,
+      resource: mcp.resource,
+      response: mcp.response,
+    };
+  } else if (serialized.http) {
+    const http = serialized.http;
+    base.url = http.url;
+    base.http = {
+      method: http.method,
+      query: http.query,
+      headers: http.headers,
+      body: http.body,
+      request: null,
+      response: http.response ? {
+        status: http.response.status,
+        statusCode: http.response.statusCode,
+        headers: http.response.headers,
+        body: http.response.body 
+          ? base64ToBlob(http.response.body, http.response.bodyType)
+          : new Blob([]),
+        duration: http.response.duration,
+        error: http.response.error,
+      } : null,
+    };
+  }
+
+  return base;
 }
 
 // ============================================================================
