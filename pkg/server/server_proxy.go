@@ -34,7 +34,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = "/" + path
 	r.URL.RawPath = ""
 
-	transport := &http.Transport{}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	}
 
 	if r.Header.Get("X-Prism-Insecure") == "true" {
 		transport.TLSClientConfig = &tls.Config{
