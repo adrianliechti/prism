@@ -220,6 +220,7 @@ export interface OpenAIEmbeddingsInput {
 
 export interface OpenAIRequestData {
   model: string;
+  apiKey?: string; // API key for authentication
   chat?: {
     input: OpenAIChatInput[];
   };

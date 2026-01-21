@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useClient } from '../../context/useClient';
-import { ChevronDown, Cpu, RefreshCw } from 'lucide-react';
+import { ChevronDown, Cpu, RefreshCw, Key } from 'lucide-react';
 
 export function OpenAIRequestBar() {
-  const { request, setUrl, setOpenAIModel } = useClient();
+  const { request, setUrl, setOpenAIModel, setOpenAIApiKey } = useClient();
 
   const url = request?.url ?? '';
   const model = request?.openai?.model ?? '';
+  const apiKey = request?.openai?.apiKey ?? '';
 
   const [models, setModels] = useState<string[]>([]);
 
@@ -14,6 +15,18 @@ export function OpenAIRequestBar() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const buildOpenAIProxyPath = useCallback((baseUrl: string, endpoint: string) => {
+    try {
+      const urlObj = new URL(baseUrl);
+      const scheme = urlObj.protocol.replace(/:$/, '');
+      const host = urlObj.host;
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return `/proxy/${scheme}/${host}/${cleanEndpoint}`;
+    } catch {
+      return '';
+    }
+  }, []);
 
   // Close menu on click outside
   useEffect(() => {
@@ -36,10 +49,22 @@ export function OpenAIRequestBar() {
     try {
       // Normalize URL - remove trailing slash
       const baseUrl = url.replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/v1/models`);
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/models');
+      if (!proxyUrl) {
+        throw new Error('Invalid OpenAI API URL');
+      }
+      const headersObj: Record<string, string> = {};
+      // Add API key as Authorization header if present
+      if (apiKey) {
+        headersObj['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      const response = await fetch(proxyUrl, {
+        headers: headersObj,
+      });
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(`${response.status}`);
       }
 
       const data = await response.json();
@@ -58,7 +83,7 @@ export function OpenAIRequestBar() {
     } finally {
       setLoading(false);
     }
-  }, [url, model, setOpenAIModel]);
+  }, [url, model, setOpenAIModel, apiKey, buildOpenAIProxyPath]);
 
   // Fetch models when URL changes (debounced)
   useEffect(() => {
@@ -116,7 +141,7 @@ export function OpenAIRequestBar() {
         </button>
 
         {modelMenuOpen && (
-          <div className="absolute left-0 z-50 mt-2 w-64 max-h-80 bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute left-0 z-50 mt-2 w-72 max-h-96 bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
             <div className="p-2 border-b border-neutral-200 dark:border-white/10 flex items-center justify-between">
               <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
                 Models ({models.length})
@@ -161,6 +186,32 @@ export function OpenAIRequestBar() {
                 ))
               )}
             </div>
+
+            {/* API Key input - show on 401 error or if key is set */}
+            {(error === '401' || apiKey) && (
+              <div className="p-2 border-t border-neutral-200 dark:border-white/10">
+                <div className="flex items-center gap-2">
+                  <Key className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setOpenAIApiKey(e.target.value)}
+                    placeholder="API Key"
+                    className="flex-1 min-w-0 px-2 py-1 text-xs bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded focus:outline-none focus:ring-1 focus:ring-violet-500/50 text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500"
+                  />
+                  {apiKey && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenAIApiKey('')}
+                      className="px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/10 rounded transition-colors"
+                      title="Clear API key"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

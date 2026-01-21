@@ -110,6 +110,7 @@ interface ClientContextType {
   // OpenAI-specific actions
   setOpenAIModel: (model: string) => void;
   setOpenAIModels: (models: string[]) => void;
+  setOpenAIApiKey: (apiKey: string) => void;
   setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
@@ -236,7 +237,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         http: prev.request.http
           ? { ...prev.request.http, body }
-          : { method: 'GET', headers: [], query: [], body, request: null, response: null },
+          : { method: 'GET', headers: [createEmptyKeyValue()], query: [createEmptyKeyValue()], body, request: null, response: null },
       },
     }));
   }, []);
@@ -275,7 +276,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         grpc: prev.request.grpc
           ? { ...prev.request.grpc, body }
-          : { body, metadata: [] },
+          : { body, metadata: [createEmptyKeyValue()] },
       },
     }));
   }, []);
@@ -299,7 +300,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         grpc: prev.request.grpc
           ? { ...prev.request.grpc, schema }
-          : { body: '', metadata: [], schema },
+          : { body: '', metadata: [createEmptyKeyValue()], schema },
       },
     }));
   }, []);
@@ -353,7 +354,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, model }
-          : { model, chat: { input: [] } },
+          : { model, headers: [createEmptyKeyValue()], chat: { input: [] } },
       },
     }));
   }, []);
@@ -365,7 +366,19 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, models }
-          : { model: '', models, chat: { input: [] } },
+          : { model: '', models, headers: [createEmptyKeyValue()], chat: { input: [] } },
+      },
+    }));
+  }, []);
+
+  const setOpenAIApiKey = useCallback((apiKey: string) => {
+    setState(prev => ({
+      ...prev,
+      request: {
+        ...prev.request,
+        openai: prev.request.openai
+          ? { ...prev.request.openai, apiKey }
+          : { model: '', apiKey, headers: [createEmptyKeyValue()], chat: { input: [] } },
       },
     }));
   }, []);
@@ -375,6 +388,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const currentOpenAI = prev.request.openai;
       const newOpenAI: OpenAIRequestData = {
         model: currentOpenAI?.model ?? '',
+        apiKey: currentOpenAI?.apiKey,
         ...(bodyType === 'chat' 
           ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }] } }
           : bodyType === 'image'
@@ -403,7 +417,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, chat: { input } }
-          : { model: '', chat: { input } },
+          : { model: '', headers: [createEmptyKeyValue()], chat: { input } },
       },
     }));
   }, []);
@@ -415,7 +429,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, image: { ...prev.request.openai.image, prompt } }
-          : { model: '', image: { prompt } },
+          : { model: '', headers: [createEmptyKeyValue()], image: { prompt } },
       },
     }));
   }, []);
@@ -427,7 +441,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, image: { prompt: prev.request.openai.image?.prompt ?? '', images } }
-          : { model: '', image: { prompt: '', images } },
+          : { model: '', headers: [createEmptyKeyValue()], image: { prompt: '', images } },
       },
     }));
   }, []);
@@ -439,7 +453,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, audio: { ...prev.request.openai.audio, text } }
-          : { model: '', audio: { text, voice: 'alloy' } },
+          : { model: '', headers: [createEmptyKeyValue()], audio: { text, voice: 'alloy' } },
       },
     }));
   }, []);
@@ -451,7 +465,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, audio: { text: prev.request.openai.audio?.text ?? '', voice } }
-          : { model: '', audio: { text: '', voice } },
+          : { model: '', headers: [createEmptyKeyValue()], audio: { text: '', voice } },
       },
     }));
   }, []);
@@ -463,7 +477,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, transcription: { file } }
-          : { model: '', transcription: { file } },
+          : { model: '', headers: [createEmptyKeyValue()], transcription: { file } },
       },
     }));
   }, []);
@@ -475,7 +489,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, embeddings: { input } }
-          : { model: '', embeddings: { input } },
+          : { model: '', headers: [createEmptyKeyValue()], embeddings: { input } },
       },
     }));
   }, []);
@@ -754,6 +768,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (req.protocol === 'openai') {
         const baseUrl = req.url.replace(/\/$/, '');
         const model = req.openai?.model;
+        const apiKey = req.openai?.apiKey;
         const isChat = !!req.openai?.chat;
 
         if (!baseUrl) {
@@ -762,6 +777,15 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         if (!model) {
           throw new Error('Please select a model');
         }
+
+        // Convert KeyValuePair[] to headers object
+        const openaiBaseHeaders: Record<string, string> = {};
+        // Add API key as Authorization header if present
+        if (apiKey) {
+          openaiBaseHeaders['Authorization'] = `Bearer ${apiKey}`;
+        }
+        // For JSON requests, add Content-Type
+        const openaiHeaders: Record<string, string> = { ...openaiBaseHeaders, 'Content-Type': 'application/json' };
 
         const startTime = performance.now();
         let openaiResponse: OpenAIRequestData['response'];
@@ -788,7 +812,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/responses');
           const response = await fetch(proxyUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: openaiHeaders,
             body: JSON.stringify({ model, input }),
           });
 
@@ -853,6 +877,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/edits');
             const response = await fetch(proxyUrl, {
               method: 'POST',
+              headers: openaiBaseHeaders,
               body: formData,
             });
 
@@ -873,7 +898,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/generations');
             const response = await fetch(proxyUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: openaiHeaders,
               body: JSON.stringify({ model, prompt, response_format: 'b64_json' }),
             });
 
@@ -901,7 +926,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/speech');
           const response = await fetch(proxyUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: openaiHeaders,
             body: JSON.stringify({ model, input: text, voice }),
           });
 
@@ -954,6 +979,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/transcriptions');
           const response = await fetch(proxyUrl, {
             method: 'POST',
+            headers: openaiBaseHeaders,
             body: formData,
           });
 
@@ -981,7 +1007,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/embeddings');
           const response = await fetch(proxyUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: openaiHeaders,
             body: JSON.stringify({ model, input: texts }),
           });
 
@@ -1417,6 +1443,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     discoverMcpFeatures,
     setOpenAIModel,
     setOpenAIModels,
+    setOpenAIApiKey,
     setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,

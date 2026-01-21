@@ -13,25 +13,25 @@ export function OpenAIRequestPanel() {
     setOpenAIImagePrompt,
     setOpenAIAudioText,
     setOpenAIAudioVoice,
-    setOpenAITranscriptionFile
+    setOpenAITranscriptionFile,
   } = useClient();
   
   const isChat = !!request?.openai?.chat;
   const isImage = !!request?.openai?.image;
   const isAudio = !!request?.openai?.audio;
   const isTranscription = !!request?.openai?.transcription;
-  const bodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : isTranscription ? 'transcription' : 'embeddings';
+  const bodyType: OpenAIBodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : isTranscription ? 'transcription' : 'embeddings';
   const imagePrompt = request?.openai?.image?.prompt ?? '';
   const audioText = request?.openai?.audio?.text ?? '';
   const audioVoice = request?.openai?.audio?.voice ?? 'alloy';
   const transcriptionFile = request?.openai?.transcription?.file ?? '';
 
-  const tabs = [
-    { id: 'chat' as Tab, label: 'Chat' },
-    { id: 'audio' as Tab, label: 'Audio' },
-    { id: 'image' as Tab, label: 'Image' },
-    { id: 'transcription' as Tab, label: 'Transcription' },
-    { id: 'embeddings' as Tab, label: 'Embeddings' },
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'chat', label: 'Chat' },
+    { id: 'audio', label: 'Audio' },
+    { id: 'image', label: 'Image' },
+    { id: 'transcription', label: 'Transcription' },
+    { id: 'embeddings', label: 'Embeddings' },
   ];
 
   const handleTabChange = (tab: Tab) => {
@@ -54,7 +54,6 @@ export function OpenAIRequestPanel() {
                   : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
               }`}
             >
-              {tab.label}
             </button>
           ))}
         </div>
