@@ -1,3 +1,15 @@
+import type { KeyValuePair } from '../types/types';
+
+export function kvToRecord(pairs: KeyValuePair[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const kv of pairs) {
+    if (kv.enabled && kv.key) {
+      record[kv.key] = kv.value;
+    }
+  }
+  return record;
+}
+
 export function getStatusBadge(statusCode: number): string {
   if (statusCode >= 200 && statusCode < 300) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
   if (statusCode >= 300 && statusCode < 400) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';

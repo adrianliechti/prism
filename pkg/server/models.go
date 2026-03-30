@@ -58,19 +58,3 @@ type McpResourceContent struct {
 	Text     string `json:"text,omitempty"`
 	Blob     string `json:"blob,omitempty"`
 }
-
-// Wrapper types for responses with timing
-
-type McpResponseWrapper struct {
-	Headers  map[string]string `json:"headers,omitempty"`
-	Result   interface{}       `json:"result,omitempty"`
-	Error    string            `json:"error,omitempty"`
-	Duration int64             `json:"duration"`
-}
-
-type GrpcResponseWrapper struct {
-	Body     string            `json:"body"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-	Error    string            `json:"error,omitempty"`
-	Duration int64             `json:"duration"`
-}

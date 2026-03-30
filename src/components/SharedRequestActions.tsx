@@ -11,9 +11,9 @@ export function SharedRequestActions() {
   const protocol = request?.protocol ?? 'rest';
   const url = request?.url ?? '';
 
-  // Parse grpc:// URL into parts
+  // Parse grpc:// or grpcs:// URL into parts
   const parseGrpcUrl = (grpcUrl: string): { host: string; service: string; method: string } => {
-    const match = grpcUrl.match(/^grpc:\/\/([^/]*)(?:\/([^/]*)(?:\/([^/]*))?)?$/);
+    const match = grpcUrl.match(/^grpcs?:\/\/([^/]*)(?:\/([^/]*)(?:\/([^/]*))?)?$/);
     if (match) {
       return { host: match[1] || '', service: match[2] || '', method: match[3] || '' };
     }

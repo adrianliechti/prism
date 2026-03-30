@@ -17,6 +17,7 @@ import {
 } from '../lib/data';
 import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIBodyType, OpenAIRequestData, OpenAIImageFile } from '../types/types';
 import { resolveVariables } from '../utils/variables';
+import { kvToRecord } from '../utils/format';
 
 function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
@@ -507,18 +508,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         throw new Error('Invalid MCP server URL');
       }
 
-      // Convert KeyValuePair[] to headers object
-      const mcpHeaders: Record<string, string> = {};
-      for (const kv of req.mcp?.headers ?? []) {
-        if (kv.enabled && kv.key) {
-          mcpHeaders[kv.key] = kv.value;
-        }
-      }
-
       const response = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ headers: mcpHeaders }),
+        body: JSON.stringify({ headers: kvToRecord(req.mcp?.headers ?? []) }),
       });
       if (!response.ok) {
         const errorText = await response.text();
@@ -574,778 +567,384 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Save request to history (insert or update)
+  const saveToHistory = useCallback((updatedRequest: Request) => {
+    const existingInHistory = history.find(h => h.id === updatedRequest.id);
+    if (existingInHistory) {
+      requestsCollection.update(updatedRequest.id, (draft) => {
+        Object.assign(draft, updatedRequest);
+      });
+    } else {
+      requestsCollection.insert(updatedRequest);
+    }
+  }, [history]);
+
+  // Build error response for a failed request
+  function buildErrorRequest(req: Request, errorMessage: string): Request {
+    const executionTime = Date.now();
+    if (req.protocol === 'grpc') {
+      return { ...req, executionTime, grpc: { ...req.grpc!, response: { body: '', duration: 0, error: errorMessage } } };
+    }
+    if (req.protocol === 'mcp') {
+      return { ...req, executionTime, mcp: { headers: req.mcp?.headers ?? [], tool: req.mcp?.tool, resource: req.mcp?.resource, response: { result: undefined, duration: 0, error: errorMessage } } };
+    }
+    if (req.protocol === 'openai') {
+      let errorResult: NonNullable<OpenAIRequestData['response']>['result'];
+      if (req.openai?.chat) errorResult = { type: 'text', text: '' };
+      else if (req.openai?.image) errorResult = { type: 'image', image: '' };
+      else if (req.openai?.audio) errorResult = { type: 'audio', audio: '' };
+      else if (req.openai?.transcription) errorResult = { type: 'transcription', text: '' };
+      else if (req.openai?.embeddings) errorResult = { type: 'embeddings', embeddings: [] };
+      else errorResult = { type: 'text', text: '' };
+      return { ...req, executionTime, openai: { ...req.openai!, response: { result: errorResult, duration: 0, error: errorMessage } } };
+    }
+    return { ...req, executionTime, http: { ...req.http!, response: { status: '', statusCode: 0, headers: {}, body: new Blob(), duration: 0, error: errorMessage } } };
+  }
+
+  // --- Per-protocol execute functions ---
+
+  async function executeGrpc(req: Request): Promise<Request> {
+    const match = req.url.match(/^(grpcs?):\/\/([^/]+)\/(.+)\/([^/]+)$/);
+    if (!match) {
+      throw new Error('Invalid gRPC URL format. Expected: grpc://host:port/service/method');
+    }
+    const [, grpcScheme, grpcHost, grpcService, grpcMethod] = match;
+
+    const grpcBody = req.grpc?.body ?? '{}';
+    const body = resolveVariables(grpcBody, req.variables);
+    const headersObj: Record<string, string> = { 'Content-Type': 'application/json', ...kvToRecord(req.grpc?.metadata ?? []) };
+    const proxyUrl = `/proxy/grpc/${grpcScheme}/${grpcHost}/${grpcService}/${grpcMethod}`;
+
+    const startTime = performance.now();
+    const response = await fetch(proxyUrl, { method: 'POST', headers: headersObj, body });
+    const duration = Math.round(performance.now() - startTime);
+
+    const responseBody = await response.text();
+    const responseMetadata: Record<string, string> = {};
+    response.headers.forEach((value, key) => { responseMetadata[key] = value; });
+
+    return {
+      ...req,
+      executionTime: Date.now(),
+      grpc: {
+        ...req.grpc,
+        body: grpcBody,
+        metadata: req.grpc?.metadata ?? [],
+        response: { body: responseBody, metadata: responseMetadata, duration, error: response.ok ? undefined : `HTTP ${response.status}` },
+      },
+    };
+  }
+
+  async function executeMcp(req: Request): Promise<Request> {
+    const serverUrl = req.url;
+    if (!serverUrl) throw new Error('MCP server URL is required');
+
+    const startTime = performance.now();
+    const mcpHeaders = kvToRecord(req.mcp?.headers ?? []);
+    let mcpResult: McpCallToolResponse | McpReadResourceResponse | undefined;
+
+    if (req.mcp?.tool) {
+      let args: Record<string, unknown> = {};
+      if (req.mcp.tool.arguments) {
+        try { args = JSON.parse(req.mcp.tool.arguments); } catch { /* empty args */ }
+      }
+
+      const path = buildMcpProxyPath(serverUrl, 'tool/call');
+      if (!path) throw new Error('Invalid MCP server URL');
+
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: req.mcp.tool.name, arguments: args, headers: mcpHeaders }),
+      });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+      mcpResult = await response.json();
+    } else if (req.mcp?.resource) {
+      const path = buildMcpProxyPath(serverUrl, 'resource/call');
+      if (!path) throw new Error('Invalid MCP server URL');
+
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uri: req.mcp.resource.uri, headers: mcpHeaders }),
+      });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+      mcpResult = await response.json();
+    } else {
+      throw new Error('No tool or resource selected');
+    }
+
+    return {
+      ...req,
+      executionTime: Date.now(),
+      mcp: { ...req.mcp, response: { result: mcpResult, duration: Math.round(performance.now() - startTime) } },
+    };
+  }
+
+  async function executeOpenAI(req: Request): Promise<Request> {
+    const baseUrl = req.url.replace(/\/$/, '');
+    const model = req.openai?.model;
+    const apiKey = req.openai?.apiKey;
+
+    if (!baseUrl) throw new Error('OpenAI API URL is required');
+    if (!model) throw new Error('Please select a model');
+
+    const openaiBaseHeaders: Record<string, string> = {};
+    if (apiKey) openaiBaseHeaders['Authorization'] = `Bearer ${apiKey}`;
+    const openaiHeaders: Record<string, string> = { ...openaiBaseHeaders, 'Content-Type': 'application/json' };
+
+    const startTime = performance.now();
+    let openaiResponse: OpenAIRequestData['response'];
+
+    if (req.openai?.chat) {
+      const input = (req.openai.chat.input ?? []).map(msg => ({
+        role: msg.role,
+        content: msg.content.map(c => {
+          switch (c.type) {
+            case 'text':
+              return { type: 'input_text', text: c.text };
+            case 'file':
+              if (c.data.startsWith('data:image/')) {
+                return { type: 'input_image', image_url: c.data };
+              } else {
+                return { type: 'input_file', filename: c.name || 'file', file_data: c.data };
+              }
+          }
+        }),
+      }));
+
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/responses');
+      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input }) });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+
+      const data = await response.json();
+      let chatOutput = '';
+      if (data.output && Array.isArray(data.output)) {
+        for (const item of data.output) {
+          if (item.type === 'message' && item.content) {
+            for (const content of item.content) {
+              if (content.type === 'output_text') chatOutput += content.text;
+            }
+          }
+        }
+      }
+      openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
+    } else if (req.openai?.image) {
+      const prompt = req.openai.image.prompt ?? '';
+      const images = req.openai.image.images ?? [];
+      const validImages = images.filter(img => img.data.length > 0);
+      if (!prompt) throw new Error('Please enter an image prompt');
+
+      if (validImages.length > 0) {
+        const formData = new FormData();
+        formData.append('model', model);
+        formData.append('prompt', prompt);
+        for (const img of validImages) {
+          const dataUrlMatch = img.data.match(/^data:([^;]+);base64,(.+)$/);
+          if (dataUrlMatch) {
+            const binary = atob(dataUrlMatch[2]);
+            const array = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+            formData.append('image[]', new Blob([array], { type: dataUrlMatch[1] }), 'image.png');
+          }
+        }
+        const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/edits');
+        const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
+        if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+        const data = await response.json();
+        const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
+        openaiResponse = { result: { type: 'image', image: img?.b64_json || img?.url || '' }, duration: Math.round(performance.now() - startTime) };
+      } else {
+        const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/generations');
+        const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, prompt, response_format: 'b64_json' }) });
+        if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+        const data = await response.json();
+        const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
+        openaiResponse = { result: { type: 'image', image: img?.b64_json || img?.url || '' }, duration: Math.round(performance.now() - startTime) };
+      }
+    } else if (req.openai?.audio) {
+      const text = req.openai.audio.text ?? '';
+      const voice = req.openai.audio.voice ?? 'alloy';
+      if (!text) throw new Error('Please enter text to convert to speech');
+
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/speech');
+      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: text, voice }) });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+
+      const audioBlob = await response.blob();
+      const audioBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => { resolve((reader.result as string).split(',')[1] || ''); };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioBlob);
+      });
+      openaiResponse = { result: { type: 'audio', audio: audioBase64 }, duration: Math.round(performance.now() - startTime) };
+    } else if (req.openai?.transcription) {
+      const dataUrl = req.openai.transcription.file ?? '';
+      if (!dataUrl) throw new Error('Please select an audio file to transcribe');
+
+      const [mimeTypePart, base64] = dataUrl.split(',');
+      const mimeType = mimeTypePart?.split(':')[1]?.split(';')[0] || 'audio/mpeg';
+      const extension = mimeType.split('/')[1] || 'mp3';
+      const audioData = atob(base64 || '');
+      const audioArray = new Uint8Array(audioData.length);
+      for (let i = 0; i < audioData.length; i++) audioArray[i] = audioData.charCodeAt(i);
+
+      const formData = new FormData();
+      formData.append('file', new Blob([audioArray], { type: mimeType }), `audio.${extension}`);
+      formData.append('model', model);
+
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/transcriptions');
+      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+      const data = await response.json();
+      openaiResponse = { result: { type: 'transcription', text: data.text || '' }, duration: Math.round(performance.now() - startTime) };
+    } else if (req.openai?.embeddings) {
+      const texts = (req.openai.embeddings.input ?? []).filter(item => item.text.trim()).map(item => item.text);
+      if (texts.length === 0) throw new Error('Please enter at least one text to convert to embeddings');
+
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/embeddings');
+      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: texts }) });
+      if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
+      const data = await response.json();
+      openaiResponse = { result: { type: 'embeddings', embeddings: (data.data || []).map((item: { embedding: number[] }) => item.embedding) }, duration: Math.round(performance.now() - startTime) };
+    } else {
+      throw new Error('Invalid OpenAI request type');
+    }
+
+    return { ...req, executionTime: Date.now(), openai: { ...req.openai!, response: openaiResponse } };
+  }
+
+  async function executeRest(req: Request): Promise<Request> {
+    const headersObj: Record<string, string> = kvToRecord(req.http?.headers ?? []);
+    const queryParams = new URLSearchParams();
+    const httpMethod = req.http?.method ?? 'GET';
+
+    // Merge query params from KV pairs
+    for (const p of (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key)) {
+      queryParams.append(p.key, p.value);
+    }
+
+    // Merge query params from the URL itself
+    try {
+      const typedUrl = new URL(req.url);
+      typedUrl.searchParams.forEach((value, key) => { queryParams.append(key, value); });
+    } catch { /* ignore invalid URLs */ }
+
+    // Build body
+    const httpBody = req.http?.body ?? { type: 'none' as const };
+    let body: string | FormData | Blob | undefined;
+    let bodyForHistory = '';
+    let useFormData = false;
+
+    switch (httpBody.type) {
+      case 'json': {
+        body = resolveVariables(httpBody.content, req.variables);
+        bodyForHistory = httpBody.content;
+        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'application/json';
+        break;
+      }
+      case 'form-urlencoded': {
+        const formParams = new URLSearchParams();
+        httpBody.data.filter(f => f.enabled && f.key).forEach(f => formParams.append(f.key, f.value));
+        body = formParams.toString();
+        bodyForHistory = formParams.toString();
+        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'application/x-www-form-urlencoded';
+        break;
+      }
+      case 'form-data': {
+        const formData = new FormData();
+        const formDescription: string[] = [];
+        httpBody.data.filter(f => f.enabled && f.key).forEach(f => {
+          if (f.type === 'file' && f.file) {
+            formData.append(f.key, f.file, f.fileName);
+            formDescription.push(`${f.key}: [File: ${f.fileName}]`);
+          } else if (f.type === 'text') {
+            formData.append(f.key, f.value);
+            formDescription.push(`${f.key}: ${f.value}`);
+          }
+        });
+        body = formData;
+        bodyForHistory = formDescription.join('\n');
+        useFormData = true;
+        break;
+      }
+      case 'binary':
+        if (httpBody.file) {
+          body = httpBody.file;
+          bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
+          if (!headersObj['Content-Type']) headersObj['Content-Type'] = (httpBody.file as File).type || 'application/octet-stream';
+        }
+        break;
+      case 'raw':
+        body = httpBody.content;
+        bodyForHistory = httpBody.content;
+        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'text/plain';
+        break;
+    }
+
+    // Options
+    const options = req.http?.request?.options ?? { insecure: false, redirect: true };
+    if (options.insecure) headersObj['X-Prism-Insecure'] = 'true';
+    headersObj['X-Prism-Redirect'] = options.redirect ? 'true' : 'false';
+
+    // Build proxy URL
+    const targetUrl = new URL(req.url);
+    let proxyUrl = '/proxy/' + targetUrl.protocol.slice(0, -1) + '/' + targetUrl.host + targetUrl.pathname;
+    const queryString = queryParams.toString();
+    if (queryString) proxyUrl += '?' + queryString;
+
+    const clientRequest: HttpRequest = {
+      method: httpMethod, url: req.url, headers: headersObj,
+      query: Object.fromEntries(queryParams), body: bodyForHistory, options,
+    };
+
+    const fetchHeaders: Record<string, string> = { ...headersObj };
+    if (useFormData) delete fetchHeaders['Content-Type'];
+
+    const startTime = performance.now();
+    const response = await fetch(proxyUrl, {
+      method: httpMethod, headers: fetchHeaders,
+      body: body && httpMethod !== 'GET' && httpMethod !== 'HEAD' ? body : undefined,
+    });
+    const duration = Math.round(performance.now() - startTime);
+
+    const responseBody = await response.blob();
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => { responseHeaders[key] = value; });
+
+    return {
+      ...req,
+      executionTime: Date.now(),
+      http: {
+        ...req.http!,
+        request: clientRequest,
+        response: { status: response.statusText || String(response.status), statusCode: response.status, headers: responseHeaders, body: responseBody, duration },
+      },
+    };
+  }
+
   const executeRequest = useCallback(async () => {
     const req = state.request;
-
     setState(prev => ({ ...prev, isExecuting: true }));
 
     try {
-      // gRPC mode
-      if (req.protocol === 'grpc') {
-        // Parse grpc://host/service/method URL
-        const grpcUrl = req.url;
-        const match = grpcUrl.match(/^grpc:\/\/([^/]+)\/(.+)\/([^/]+)$/);
-        if (!match) {
-          throw new Error('Invalid gRPC URL format. Expected: grpc://host:port/service/method');
-        }
-        const [, grpcHost, grpcService, grpcMethod] = match;
-
-        // gRPC uses its own body field
-        const grpcBody = req.grpc?.body ?? '{}';
-        const body = resolveVariables(grpcBody, req.variables);
-
-        // Build headers from metadata
-        const headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
-        (req.grpc?.metadata ?? []).filter((h: KeyValuePair) => h.enabled && h.key).forEach((h: KeyValuePair) => {
-          headersObj[h.key] = h.value;
-        });
-
-        // Build gRPC proxy URL: /proxy/grpc/{host}/{service}/{method}
-        const proxyUrl = `/proxy/grpc/${grpcHost}/${grpcService}/${grpcMethod}`;
-
-        const startTime = performance.now();
-        const response = await fetch(proxyUrl, {
-          method: 'POST',
-          headers: headersObj,
-          body,
-        });
-        const duration = Math.round(performance.now() - startTime);
-
-        const responseBody = await response.text();
-        const responseMetadata: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          responseMetadata[key] = value;
-        });
-
-        const executionTime = Date.now();
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          grpc: {
-            ...req.grpc,
-            body: grpcBody,
-            metadata: req.grpc?.metadata ?? [],
-            response: {
-              body: responseBody,
-              metadata: responseMetadata,
-              duration,
-              error: response.ok ? undefined : `HTTP ${response.status}`,
-            },
-          },
-        };
-
-        // Save to collection (TanStack DB handles persistence)
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({
-          ...prev,
-          request: updatedRequest,
-          isExecuting: false,
-        }));
-
-        return;
+      let updatedRequest: Request;
+      switch (req.protocol) {
+        case 'grpc': updatedRequest = await executeGrpc(req); break;
+        case 'mcp': updatedRequest = await executeMcp(req); break;
+        case 'openai': updatedRequest = await executeOpenAI(req); break;
+        default: updatedRequest = await executeRest(req); break;
       }
-
-      // MCP mode
-      if (req.protocol === 'mcp') {
-        const serverUrl = req.url;
-        if (!serverUrl) {
-          throw new Error('MCP server URL is required');
-        }
-
-        const startTime = performance.now();
-        let mcpResult: McpCallToolResponse | McpReadResourceResponse | undefined;
-
-        // Determine what to execute based on tool/resource
-        if (req.mcp?.tool) {
-          // Call a tool - arguments are stored in tool.arguments as JSON string
-          let args: Record<string, unknown> = {};
-          if (req.mcp.tool.arguments) {
-            try {
-              args = JSON.parse(req.mcp.tool.arguments);
-            } catch {
-              // Ignore parse errors, use empty args
-            }
-          }
-
-          // Convert KeyValuePair[] to headers object
-          const mcpHeaders: Record<string, string> = {};
-          for (const kv of req.mcp?.headers ?? []) {
-            if (kv.enabled && kv.key) {
-              mcpHeaders[kv.key] = kv.value;
-            }
-          }
-
-          const path = buildMcpProxyPath(serverUrl, 'tool/call');
-          if (!path) throw new Error('Invalid MCP server URL');
-
-          const response = await fetch(path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: req.mcp.tool.name, arguments: args, headers: mcpHeaders }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          const result: McpCallToolResponse = await response.json();
-          mcpResult = result;
-        } else if (req.mcp?.resource) {
-          // Read a resource
-          const path = buildMcpProxyPath(serverUrl, 'resource/call');
-          if (!path) throw new Error('Invalid MCP server URL');
-
-          // Convert KeyValuePair[] to headers object
-          const mcpHeaders: Record<string, string> = {};
-          for (const kv of req.mcp?.headers ?? []) {
-            if (kv.enabled && kv.key) {
-              mcpHeaders[kv.key] = kv.value;
-            }
-          }
-
-          const response = await fetch(path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uri: req.mcp.resource.uri, headers: mcpHeaders }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          const result: McpReadResourceResponse = await response.json();
-          mcpResult = result;
-        } else {
-          throw new Error('No tool or resource selected');
-        }
-
-        const duration = Math.round(performance.now() - startTime);
-        const executionTime = Date.now();
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          mcp: {
-            ...req.mcp,
-            response: {
-              result: mcpResult,
-              duration,
-            },
-          },
-        };
-
-        // Save to collection
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({
-          ...prev,
-          request: updatedRequest,
-          isExecuting: false,
-        }));
-
-        return;
-      }
-
-      // OpenAI mode
-      if (req.protocol === 'openai') {
-        const baseUrl = req.url.replace(/\/$/, '');
-        const model = req.openai?.model;
-        const apiKey = req.openai?.apiKey;
-        const isChat = !!req.openai?.chat;
-
-        if (!baseUrl) {
-          throw new Error('OpenAI API URL is required');
-        }
-        if (!model) {
-          throw new Error('Please select a model');
-        }
-
-        // Convert KeyValuePair[] to headers object
-        const openaiBaseHeaders: Record<string, string> = {};
-        // Add API key as Authorization header if present
-        if (apiKey) {
-          openaiBaseHeaders['Authorization'] = `Bearer ${apiKey}`;
-        }
-        // For JSON requests, add Content-Type
-        const openaiHeaders: Record<string, string> = { ...openaiBaseHeaders, 'Content-Type': 'application/json' };
-
-        const startTime = performance.now();
-        let openaiResponse: OpenAIRequestData['response'];
-
-        if (isChat) {
-          // Build input messages for /v1/responses API
-          const input = (req.openai?.chat?.input ?? []).map(msg => ({
-            role: msg.role,
-            content: msg.content.map(c => {
-              switch (c.type) {
-                case 'text':
-                  return { type: 'input_text', text: c.text };
-                case 'file':
-                  // Determine if it's an image or regular file based on data URL
-                  if (c.data.startsWith('data:image/')) {
-                    return { type: 'input_image', image_url: c.data };
-                  } else {
-                    return { type: 'input_file', filename: c.name || 'file', file_data: c.data };
-                  }
-              }
-            }),
-          }));
-
-          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/responses');
-          const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: openaiHeaders,
-            body: JSON.stringify({ model, input }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          const data = await response.json();
-          // Extract the output text from the response
-          // The response format has output array with items
-          let chatOutput = '';
-          if (data.output && Array.isArray(data.output)) {
-            for (const item of data.output) {
-              if (item.type === 'message' && item.content) {
-                for (const content of item.content) {
-                  if (content.type === 'output_text') {
-                    chatOutput += content.text;
-                  }
-                }
-              }
-            }
-          }
-          openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
-        } else if (req.openai?.image) {
-          const prompt = req.openai.image.prompt ?? '';
-          const images = req.openai.image.images ?? [];
-          const validImages = images.filter(img => img.data.length > 0);
-          const isEditMode = validImages.length > 0;
-          
-          if (!prompt) {
-            throw new Error('Please enter an image prompt');
-          }
-          
-          if (isEditMode) {
-            // Image editing via /v1/images/edits
-            if (validImages.length === 0) {
-              throw new Error('Please upload at least one image');
-            }
-
-            const formData = new FormData();
-            formData.append('model', model);
-            formData.append('prompt', prompt);
-
-            // Add all images with image[] field name
-            for (const img of validImages) {
-              // Convert data URL to blob
-              const dataUrlMatch = img.data.match(/^data:([^;]+);base64,(.+)$/);
-              if (dataUrlMatch) {
-                const mimeType = dataUrlMatch[1];
-                const base64 = dataUrlMatch[2];
-                const binary = atob(base64);
-                const array = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) {
-                  array[i] = binary.charCodeAt(i);
-                }
-                const blob = new Blob([array], { type: mimeType });
-                formData.append('image[]', blob, 'image.png');
-              }
-            }
-
-            const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/edits');
-            const response = await fetch(proxyUrl, {
-              method: 'POST',
-              headers: openaiBaseHeaders,
-              body: formData,
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(errorText || `HTTP ${response.status}`);
-            }
-
-            const data = await response.json();
-            const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
-            const image = img?.b64_json || img?.url || '';
-            openaiResponse = { 
-              result: { type: 'image', image },
-              duration: Math.round(performance.now() - startTime) 
-            };
-          } else {
-            // Image generation via /v1/images/generations
-            const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/generations');
-            const response = await fetch(proxyUrl, {
-              method: 'POST',
-              headers: openaiHeaders,
-              body: JSON.stringify({ model, prompt, response_format: 'b64_json' }),
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(errorText || `HTTP ${response.status}`);
-            }
-
-            const data = await response.json();
-            const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
-            const image = img?.b64_json || img?.url || '';
-            openaiResponse = { 
-              result: { type: 'image', image },
-              duration: Math.round(performance.now() - startTime) 
-            };
-          }
-        } else if (req.openai?.audio) {
-          // Audio/TTS generation via /v1/audio/speech
-          const text = req.openai?.audio?.text ?? '';
-          const voice = req.openai?.audio?.voice ?? 'alloy';
-          if (!text) {
-            throw new Error('Please enter text to convert to speech');
-          }
-
-          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/speech');
-          const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: openaiHeaders,
-            body: JSON.stringify({ model, input: text, voice }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          // Get the audio data as a blob and convert to base64
-          const audioBlob = await response.blob();
-          const reader = new FileReader();
-          const audioBase64 = await new Promise<string>((resolve, reject) => {
-            reader.onloadend = () => {
-              const result = reader.result as string;
-              // Remove the data URL prefix (e.g., "data:audio/mpeg;base64,")
-              const base64 = result.split(',')[1] || '';
-              resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(audioBlob);
-          });
-
-          openaiResponse = { 
-            result: { type: 'audio', audio: audioBase64 },
-            duration: Math.round(performance.now() - startTime) 
-          };
-        } else if (req.openai?.transcription) {
-          // Audio transcription via /v1/audio/transcriptions
-          const dataUrl = req.openai?.transcription?.file ?? '';
-          if (!dataUrl) {
-            throw new Error('Please select an audio file to transcribe');
-          }
-
-          // Extract base64 and MIME type from data URL (data:audio/...;base64,...)
-          const [mimeTypePart, base64] = dataUrl.split(',');
-          const mimeType = mimeTypePart?.split(':')[1]?.split(';')[0] || 'audio/mpeg';
-          const extension = mimeType.split('/')[1] || 'mp3';
-          const audioData = atob(base64 || '');
-          const audioArray = new Uint8Array(audioData.length);
-          for (let i = 0; i < audioData.length; i++) {
-            audioArray[i] = audioData.charCodeAt(i);
-          }
-          const audioBlob = new Blob([audioArray], { type: mimeType });
-
-          // Create FormData
-          const formData = new FormData();
-          formData.append('file', audioBlob, `audio.${extension}`);
-          formData.append('model', model);
-
-          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/transcriptions');
-          const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: openaiBaseHeaders,
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          const data = await response.json();
-          const transcriptionText = data.text || '';
-          
-          openaiResponse = { 
-            result: { type: 'transcription', text: transcriptionText },
-            duration: Math.round(performance.now() - startTime) 
-          };
-        } else if (req.openai?.embeddings) {
-          // Embeddings generation via /v1/embeddings
-          const inputs = req.openai?.embeddings?.input ?? [];
-          const texts = inputs.filter(item => item.text.trim()).map(item => item.text);
-          
-          if (texts.length === 0) {
-            throw new Error('Please enter at least one text to convert to embeddings');
-          }
-
-          const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/embeddings');
-          const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: openaiHeaders,
-            body: JSON.stringify({ model, input: texts }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `HTTP ${response.status}`);
-          }
-
-          const data = await response.json();
-          const embeddings = (data.data || []).map((item: { embedding: number[] }) => item.embedding);
-          
-          openaiResponse = { 
-            result: { type: 'embeddings', embeddings },
-            duration: Math.round(performance.now() - startTime) 
-          };
-        } else {
-          throw new Error('Invalid OpenAI request type');
-        }
-
-        const executionTime = Date.now();
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          openai: {
-            ...req.openai!,
-            response: openaiResponse,
-          },
-        };
-
-        // Save to collection
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({
-          ...prev,
-          request: updatedRequest,
-          isExecuting: false,
-        }));
-
-        return;
-      }
-
-      // REST mode
-      // Build headers
-      const headersObj: Record<string, string> = {};
-      (req.http?.headers ?? []).filter((h: KeyValuePair) => h.enabled && h.key).forEach((h: KeyValuePair) => {
-        headersObj[h.key] = h.value;
-      });
-
-      // Build query string
-      const queryParams = new URLSearchParams();
-      const httpMethod = req.http?.method ?? 'GET';
-      (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key).forEach((p: KeyValuePair) => {
-        queryParams.append(p.key, p.value);
-      });
-
-      // Build body based on type (from http.body)
-      const httpBody = req.http?.body ?? { type: 'none' as const };
-      let body: string | FormData | Blob | undefined;
-      let bodyForHistory: string = '';
-      let useFormData = false;
-      
-      switch (httpBody.type) {
-        case 'json': {
-          // Resolve variables in JSON content
-          const resolvedContent = resolveVariables(httpBody.content, req.variables);
-          
-          body = resolvedContent;
-          bodyForHistory = httpBody.content; // Store original with markers
-          if (!headersObj['Content-Type']) {
-            headersObj['Content-Type'] = 'application/json';
-          }
-          break;
-        }
-        case 'form-urlencoded': {
-          const formParams = new URLSearchParams();
-          httpBody.data.filter((f: { enabled: boolean; key: string; value: string }) => f.enabled && f.key).forEach((f: { key: string; value: string }) => {
-            formParams.append(f.key, f.value);
-          });
-          body = formParams.toString();
-          bodyForHistory = formParams.toString();
-          if (!headersObj['Content-Type']) {
-            headersObj['Content-Type'] = 'application/x-www-form-urlencoded';
-          }
-          break;
-        }
-        case 'form-data': {
-          const formData = new FormData();
-          const formDescription: string[] = [];
-          httpBody.data.filter((f: { enabled: boolean; key: string }) => f.enabled && f.key).forEach((f: { type: string; key: string; value: string; file?: File | null; fileName?: string }) => {
-            if (f.type === 'file' && f.file) {
-              formData.append(f.key, f.file, f.fileName);
-              formDescription.push(`${f.key}: [File: ${f.fileName}]`);
-            } else if (f.type === 'text') {
-              formData.append(f.key, f.value);
-              formDescription.push(`${f.key}: ${f.value}`);
-            }
-          });
-          body = formData;
-          bodyForHistory = formDescription.join('\n');
-          useFormData = true;
-          // Don't set Content-Type for FormData - browser will set it with boundary
-          break;
-        }
-        case 'binary': {
-          if (httpBody.file) {
-            body = httpBody.file;
-            bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
-            if (!headersObj['Content-Type']) {
-              headersObj['Content-Type'] = (httpBody.file as File).type || 'application/octet-stream';
-            }
-          }
-          break;
-        }
-        case 'raw':
-          body = httpBody.content;
-          bodyForHistory = httpBody.content;
-          if (!headersObj['Content-Type']) {
-            headersObj['Content-Type'] = 'text/plain';
-          }
-          break;
-      }
-
-      // Get options
-      const options = req.http?.request?.options ?? { insecure: false, redirect: true };
-
-      // Add proxy headers for options
-      if (options.insecure) {
-        headersObj['X-Prism-Insecure'] = 'true';
-      }
-      if (options.redirect) {
-        headersObj['X-Prism-Redirect'] = 'true';
-      }
-
-      // Build proxy URL: /proxy/{scheme}/{host}/{path}?query
-      const targetUrl = new URL(req.url);
-      let proxyUrl = '/proxy/' + targetUrl.protocol.slice(0, -1) + '/' + targetUrl.host + targetUrl.pathname;
-      const queryString = queryParams.toString();
-      if (queryString) {
-        proxyUrl += '?' + queryString;
-      }
-
-      // Store the request for history (without file objects)
-      const clientRequest: HttpRequest = {
-        method: httpMethod,
-        url: req.url,
-        headers: headersObj,
-        query: Object.fromEntries(queryParams),
-        body: bodyForHistory,
-        options,
-      };
-
-      // Prepare fetch options
-      const fetchHeaders: Record<string, string> = { ...headersObj };
-      // For FormData, remove Content-Type so browser sets it with boundary
-      if (useFormData) {
-        delete fetchHeaders['Content-Type'];
-      }
-
-      const startTime = performance.now();
-      const response = await fetch(proxyUrl, {
-        method: httpMethod,
-        headers: fetchHeaders,
-        body: body && httpMethod !== 'GET' && httpMethod !== 'HEAD' ? body : undefined,
-      });
-      const duration = Math.round(performance.now() - startTime);
-
-      // Always read response as Blob
-      const responseBody = await response.blob();
-
-      // Convert headers to Record
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value;
-      });
-
-      const clientResponse = {
-        status: response.statusText || String(response.status),
-        statusCode: response.status,
-        headers: responseHeaders,
-        body: responseBody,
-        duration,
-      };
-
-      const executionTime = Date.now();
-      
-      // Update current request with response
-      const updatedRequest: Request = {
-        ...req,
-        executionTime,
-        
-        http: {
-          ...req.http!,
-          request: clientRequest,
-          response: clientResponse,
-        },
-      };
-      
-      // Save to collection (TanStack DB handles persistence)
-      const existingInHistory = history.find(h => h.id === req.id);
-      if (existingInHistory) {
-        requestsCollection.update(req.id, (draft) => {
-          Object.assign(draft, updatedRequest);
-        });
-      } else {
-        requestsCollection.insert(updatedRequest);
-      }
-
-      setState(prev => ({
-        ...prev,
-        request: updatedRequest,
-          isExecuting: false,
-      }));
-      
+      saveToHistory(updatedRequest);
+      setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
     } catch (err) {
-      const executionTime = Date.now();
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      
-      // Create error response based on protocol
-      if (req.protocol === 'grpc') {
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          grpc: {
-            ...req.grpc!,
-            response: {
-              body: '',
-              duration: 0,
-              error: errorMessage,
-            },
-          },
-        };
-        
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      } else if (req.protocol === 'mcp') {
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          mcp: {
-            headers: req.mcp?.headers ?? [],
-            tool: req.mcp?.tool,
-            resource: req.mcp?.resource,
-            response: {
-              result: undefined,
-              duration: 0,
-              error: errorMessage,
-            },
-          },
-        };
-        
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      } else if (req.protocol === 'openai') {
-        const isChat = !!req.openai?.chat;
-        const errorResponse = isChat
-          ? { result: { type: 'text' as const, text: '' }, duration: 0, error: errorMessage }
-          : { result: { type: 'image' as const, image: '' }, duration: 0, error: errorMessage };
-        
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          openai: {
-            ...req.openai!,
-            response: errorResponse,
-          },
-        };
-        
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      } else {
-        // HTTP error response
-        const errorResponse = {
-          status: '',
-          statusCode: 0,
-          headers: {},
-          body: new Blob(),
-          duration: 0,
-          error: errorMessage,
-        };
-        
-        const updatedRequest: Request = {
-          ...req,
-          executionTime,
-          
-          http: {
-            ...req.http!,
-            response: errorResponse,
-          },
-        };
-        
-        const existingInHistory = history.find(h => h.id === req.id);
-        if (existingInHistory) {
-          requestsCollection.update(req.id, (draft) => {
-            Object.assign(draft, updatedRequest);
-          });
-        } else {
-          requestsCollection.insert(updatedRequest);
-        }
-
-        setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      }
+      const updatedRequest = buildErrorRequest(req, errorMessage);
+      saveToHistory(updatedRequest);
+      setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
     }
-  }, [state.request, history, buildMcpProxyPath, buildOpenAIProxyPath]);
+  }, [state.request, saveToHistory, buildMcpProxyPath, buildOpenAIProxyPath]);
 
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {

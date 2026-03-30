@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +11,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -28,7 +30,7 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = r.PathValue("scheme")
+	scheme := r.PathValue("scheme")
 	host := r.PathValue("host")
 	path := r.PathValue("path")
 
@@ -54,9 +56,7 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(host,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := grpc.NewClient(host, grpcTransportCredentials(scheme))
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to connect to %s: %v", host, err), http.StatusBadGateway)
@@ -72,11 +72,40 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Forward HTTP headers as gRPC metadata
+	md := metadata.New(nil)
+	for key, values := range r.Header {
+		lowerKey := strings.ToLower(key)
+		if lowerKey == "content-type" || lowerKey == "content-length" ||
+			lowerKey == "host" || lowerKey == "accept" ||
+			lowerKey == "user-agent" || lowerKey == "accept-encoding" ||
+			lowerKey == "connection" {
+			continue
+		}
+		for _, v := range values {
+			md.Append(lowerKey, v)
+		}
+	}
+	ctx = metadata.NewOutgoingContext(ctx, md)
+
 	respMsg := dynamicpb.NewMessage(methodDesc.Output())
 
-	if err := conn.Invoke(ctx, fmt.Sprintf("/%s/%s", service, method), reqMsg, respMsg); err != nil {
+	var respHeader, respTrailer metadata.MD
+	if err := conn.Invoke(ctx, fmt.Sprintf("/%s/%s", service, method), reqMsg, respMsg, grpc.Header(&respHeader), grpc.Trailer(&respTrailer)); err != nil {
 		http.Error(w, fmt.Sprintf("gRPC call failed: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Write response metadata as HTTP headers
+	for k, vals := range respHeader {
+		for _, v := range vals {
+			w.Header().Add("Grpc-Header-"+k, v)
+		}
+	}
+	for k, vals := range respTrailer {
+		for _, v := range vals {
+			w.Header().Add("Grpc-Trailer-"+k, v)
+		}
 	}
 
 	jsonResp, err := protojson.Marshal(respMsg)
@@ -91,15 +120,21 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResp)
 }
 
+func grpcTransportCredentials(scheme string) grpc.DialOption {
+	if scheme == "grpcs" {
+		return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
+	}
+	return grpc.WithTransportCredentials(insecure.NewCredentials())
+}
+
 func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
+	scheme := r.PathValue("scheme")
 	host := r.PathValue("host")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(host,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := grpc.NewClient(host, grpcTransportCredentials(scheme))
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to connect to %s: %v", host, err), http.StatusBadGateway)

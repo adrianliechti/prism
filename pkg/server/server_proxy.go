@@ -7,6 +7,16 @@ import (
 	"net/url"
 )
 
+// redirectTransport wraps a RoundTripper to follow redirects server-side.
+type redirectTransport struct {
+	base http.RoundTripper
+}
+
+func (t *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: t.base}
+	return client.Do(req)
+}
+
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// CORS headers - allow everything
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -34,6 +44,8 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = "/" + path
 	r.URL.RawPath = ""
 
+	followRedirect := r.Header.Get("X-Prism-Redirect") == "true"
+
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 	}
@@ -44,8 +56,13 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var rt http.RoundTripper = transport
+	if followRedirect {
+		rt = &redirectTransport{base: transport}
+	}
+
 	proxy := &httputil.ReverseProxy{
-		Transport: transport,
+		Transport: rt,
 
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
