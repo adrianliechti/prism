@@ -13,8 +13,11 @@ type redirectTransport struct {
 }
 
 func (t *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clientReq := req.Clone(req.Context())
+	clientReq.RequestURI = ""
+
 	client := &http.Client{Transport: t.base}
-	return client.Do(req)
+	return client.Do(clientReq)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
