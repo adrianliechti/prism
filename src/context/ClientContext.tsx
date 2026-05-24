@@ -1,5 +1,4 @@
-/* eslint-disable react-refresh/only-export-components */
-import { createContext, useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
 import { useLiveQuery } from '@tanstack/react-db';
 import {
   requestsCollection,
@@ -15,12 +14,33 @@ import {
   type McpCallToolResponse,
   type McpReadResourceResponse,
 } from '../lib/data';
-import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIBodyType, OpenAIRequestData, OpenAIImageFile } from '../types/types';
+import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIRequestData, OpenAIImageFile } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 import { kvToRecord } from '../utils/format';
+import { ClientContext, type ClientContextType } from './clientContextBase';
+
+const defaultHttpOptions: HttpRequest['options'] = { insecure: false, redirect: true };
 
 function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
+}
+
+function hasHeader(headers: Record<string, string>, headerName: string): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === headerName.toLowerCase());
+}
+
+function deleteHeader(headers: Record<string, string>, headerName: string): void {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === headerName.toLowerCase()) {
+      delete headers[key];
+    }
+  }
+}
+
+function setHeaderIfMissing(headers: Record<string, string>, headerName: string, value: string): void {
+  if (!hasHeader(headers, headerName)) {
+    headers[headerName] = value;
+  }
 }
 
 function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
@@ -61,6 +81,7 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
         headers: [createEmptyKeyValue()],
         query: [createEmptyKeyValue()],
         body: { type: 'none' },
+        options: defaultHttpOptions,
         request: null,
         response: null,
       };
@@ -76,65 +97,6 @@ interface ClientState {
   sidebarCollapsed: boolean;
   aiPanelOpen: boolean;
 }
-
-interface ClientContextType {
-  // State
-  request: Request;
-  isExecuting: boolean;
-  history: Request[];
-  sidebarCollapsed: boolean;
-  
-  // Request actions
-  setProtocol: (protocol: Protocol) => void;
-  setMethod: (method: HttpMethod) => void;
-  setUrl: (url: string) => void;
-  setHeaders: (headers: KeyValuePair[]) => void;
-  setQuery: (params: KeyValuePair[]) => void;
-  setBody: (body: RequestBody) => void;
-  setVariables: (variables: Variable[]) => void;
-  setOptions: (options: Partial<HttpRequest['options']>) => void;
-  executeRequest: () => Promise<void>;
-  clearResponse: () => void;
-  newRequest: () => void;
-  
-  // gRPC-specific actions
-  setGrpcBody: (body: string) => void;
-  setGrpcMetadata: (metadata: KeyValuePair[]) => void;
-  setGrpcMethodSchema: (schema: Record<string, unknown> | undefined) => void;
-  
-  // MCP-specific actions
-  setMcpTool: (tool: { name: string; arguments: string; schema?: Record<string, unknown> } | undefined) => void;
-  setMcpResource: (resource: { uri: string } | undefined) => void;
-  setMcpHeaders: (headers: KeyValuePair[]) => void;
-  discoverMcpFeatures: () => Promise<McpListFeaturesResponse | null>;
-  
-  // OpenAI-specific actions
-  setOpenAIModel: (model: string) => void;
-  setOpenAIModels: (models: string[]) => void;
-  setOpenAIApiKey: (apiKey: string) => void;
-  setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
-  setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
-  setOpenAIImagePrompt: (prompt: string) => void;
-  setOpenAIImageFiles: (images: OpenAIImageFile[]) => void;
-  setOpenAIAudioText: (text: string) => void;
-  setOpenAIAudioVoice: (voice: string) => void;
-  setOpenAITranscriptionFile: (file: string) => void;
-  setOpenAIEmbeddingsInput: (input: OpenAIEmbeddingsInput[]) => void;
-  
-  // History actions
-  loadFromHistory: (entry: Request) => void;
-  clearHistory: () => void;
-  deleteHistoryEntry: (id: string) => void;
-  
-  // Sidebar
-  toggleSidebar: () => void;
-  
-  // AI Panel
-  aiPanelOpen: boolean;
-  toggleAiPanel: () => void;
-}
-
-export const ClientContext = createContext<ClientContextType | null>(null);
 
 const initialState: ClientState = {
   request: createNewRequest(),
@@ -238,7 +200,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         http: prev.request.http
           ? { ...prev.request.http, body }
-          : { method: 'GET', headers: [createEmptyKeyValue()], query: [createEmptyKeyValue()], body, request: null, response: null },
+          : { method: 'GET', headers: [createEmptyKeyValue()], query: [createEmptyKeyValue()], body, options: defaultHttpOptions, request: null, response: null },
       },
     }));
   }, []);
@@ -249,8 +211,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   const setOptions = useCallback((options: Partial<HttpRequest['options']>) => {
     setState(prev => {
-      const currentRequest = prev.request.http?.request;
-      const currentOptions = currentRequest?.options ?? { insecure: false, redirect: true };
+      const currentOptions = prev.request.http?.options ?? defaultHttpOptions;
       const newOptions = { ...currentOptions, ...options };
       return {
         ...prev,
@@ -259,9 +220,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           http: prev.request.http
             ? {
                 ...prev.request.http,
-                request: currentRequest
-                  ? { ...currentRequest, options: newOptions }
-                  : null,
+                options: newOptions,
+                request: prev.request.http.request
+                  ? { ...prev.request.http.request, options: newOptions }
+                  : prev.request.http.request,
               }
             : undefined,
         },
@@ -355,19 +317,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, model }
-          : { model, headers: [createEmptyKeyValue()], chat: { input: [] } },
-      },
-    }));
-  }, []);
-
-  const setOpenAIModels = useCallback((models: string[]) => {
-    setState(prev => ({
-      ...prev,
-      request: {
-        ...prev.request,
-        openai: prev.request.openai
-          ? { ...prev.request.openai, models }
-          : { model: '', models, headers: [createEmptyKeyValue()], chat: { input: [] } },
+          : { model, chat: { input: [] } },
       },
     }));
   }, []);
@@ -379,7 +329,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, apiKey }
-          : { model: '', apiKey, headers: [createEmptyKeyValue()], chat: { input: [] } },
+          : { model: '', apiKey, chat: { input: [] } },
       },
     }));
   }, []);
@@ -418,7 +368,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, chat: { input } }
-          : { model: '', headers: [createEmptyKeyValue()], chat: { input } },
+          : { model: '', chat: { input } },
       },
     }));
   }, []);
@@ -430,7 +380,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, image: { ...prev.request.openai.image, prompt } }
-          : { model: '', headers: [createEmptyKeyValue()], image: { prompt } },
+          : { model: '', image: { prompt } },
       },
     }));
   }, []);
@@ -442,7 +392,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, image: { prompt: prev.request.openai.image?.prompt ?? '', images } }
-          : { model: '', headers: [createEmptyKeyValue()], image: { prompt: '', images } },
+          : { model: '', image: { prompt: '', images } },
       },
     }));
   }, []);
@@ -454,7 +404,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, audio: { ...prev.request.openai.audio, text } }
-          : { model: '', headers: [createEmptyKeyValue()], audio: { text, voice: 'alloy' } },
+          : { model: '', audio: { text, voice: 'alloy' } },
       },
     }));
   }, []);
@@ -466,7 +416,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, audio: { text: prev.request.openai.audio?.text ?? '', voice } }
-          : { model: '', headers: [createEmptyKeyValue()], audio: { text: '', voice } },
+          : { model: '', audio: { text: '', voice } },
       },
     }));
   }, []);
@@ -478,7 +428,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, transcription: { file } }
-          : { model: '', headers: [createEmptyKeyValue()], transcription: { file } },
+          : { model: '', transcription: { file } },
       },
     }));
   }, []);
@@ -490,7 +440,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...prev.request,
         openai: prev.request.openai
           ? { ...prev.request.openai, embeddings: { input } }
-          : { model: '', headers: [createEmptyKeyValue()], embeddings: { input } },
+          : { model: '', embeddings: { input } },
       },
     }));
   }, []);
@@ -525,7 +475,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, isExecuting: false }));
       return { tools: [], resources: [], error: errorMessage };
     }
-  }, [state.request, updateRequest, buildMcpProxyPath]);
+  }, [state.request, buildMcpProxyPath]);
 
   const clearResponse = useCallback(() => {
     setState(prev => {
@@ -569,13 +519,16 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   // Save request to history (insert or update)
   const saveToHistory = useCallback((updatedRequest: Request) => {
-    const existingInHistory = history.find(h => h.id === updatedRequest.id);
+    const historyRequest = updatedRequest.openai?.apiKey
+      ? { ...updatedRequest, openai: { ...updatedRequest.openai, apiKey: undefined } }
+      : updatedRequest;
+    const existingInHistory = history.find(h => h.id === historyRequest.id);
     if (existingInHistory) {
-      requestsCollection.update(updatedRequest.id, (draft) => {
-        Object.assign(draft, updatedRequest);
+      requestsCollection.update(historyRequest.id, (draft) => {
+        Object.assign(draft, historyRequest);
       });
     } else {
-      requestsCollection.insert(updatedRequest);
+      requestsCollection.insert(historyRequest);
     }
   }, [history]);
 
@@ -623,6 +576,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const responseMetadata: Record<string, string> = {};
     response.headers.forEach((value, key) => { responseMetadata[key] = value; });
 
+    let error: string | undefined;
+    if (!response.ok) {
+      const trimmed = responseBody.trim();
+      error = trimmed ? trimmed : `HTTP ${response.status}`;
+    }
+
     return {
       ...req,
       executionTime: Date.now(),
@@ -630,7 +589,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         ...req.grpc,
         body: grpcBody,
         metadata: req.grpc?.metadata ?? [],
-        response: { body: responseBody, metadata: responseMetadata, duration, error: response.ok ? undefined : `HTTP ${response.status}` },
+        response: { body: responseBody, metadata: responseMetadata, duration, error },
       },
     };
   }
@@ -645,8 +604,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     if (req.mcp?.tool) {
       let args: Record<string, unknown> = {};
-      if (req.mcp.tool.arguments) {
-        try { args = JSON.parse(req.mcp.tool.arguments); } catch { /* empty args */ }
+      const rawArgs = resolveVariables(req.mcp.tool.arguments, req.variables);
+      if (rawArgs.trim()) {
+        try {
+          args = JSON.parse(rawArgs);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Invalid JSON';
+          throw new Error(`Invalid MCP tool arguments: ${message}`);
+        }
       }
 
       const path = buildMcpProxyPath(serverUrl, 'tool/call');
@@ -688,6 +653,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     if (!baseUrl) throw new Error('OpenAI API URL is required');
     if (!model) throw new Error('Please select a model');
+
+    try {
+      new URL(baseUrl);
+    } catch {
+      throw new Error('Invalid OpenAI API URL. Include the scheme, e.g. https://api.openai.com/v1');
+    }
 
     const openaiBaseHeaders: Record<string, string> = {};
     if (apiKey) openaiBaseHeaders['Authorization'] = `Bearer ${apiKey}`;
@@ -841,7 +812,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       case 'json': {
         body = resolveVariables(httpBody.content, req.variables);
         bodyForHistory = httpBody.content;
-        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'application/json';
+        setHeaderIfMissing(headersObj, 'Content-Type', 'application/json');
         break;
       }
       case 'form-urlencoded': {
@@ -849,7 +820,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         httpBody.data.filter(f => f.enabled && f.key).forEach(f => formParams.append(f.key, f.value));
         body = formParams.toString();
         bodyForHistory = formParams.toString();
-        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'application/x-www-form-urlencoded';
+        setHeaderIfMissing(headersObj, 'Content-Type', 'application/x-www-form-urlencoded');
         break;
       }
       case 'form-data': {
@@ -873,23 +844,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         if (httpBody.file) {
           body = httpBody.file;
           bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
-          if (!headersObj['Content-Type']) headersObj['Content-Type'] = (httpBody.file as File).type || 'application/octet-stream';
+          setHeaderIfMissing(headersObj, 'Content-Type', (httpBody.file as File).type || 'application/octet-stream');
         }
         break;
       case 'raw':
         body = httpBody.content;
         bodyForHistory = httpBody.content;
-        if (!headersObj['Content-Type']) headersObj['Content-Type'] = 'text/plain';
+        setHeaderIfMissing(headersObj, 'Content-Type', 'text/plain');
         break;
     }
 
     // Options
-    const options = req.http?.request?.options ?? { insecure: false, redirect: true };
+    const options = req.http?.options ?? defaultHttpOptions;
     if (options.insecure) headersObj['X-Prism-Insecure'] = 'true';
     headersObj['X-Prism-Redirect'] = options.redirect ? 'true' : 'false';
 
     // Build proxy URL
-    const targetUrl = new URL(req.url);
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(req.url);
+    } catch {
+      throw new Error('Invalid URL. Include the scheme, e.g. https://example.com');
+    }
     let proxyUrl = '/proxy/' + targetUrl.protocol.slice(0, -1) + '/' + targetUrl.host + targetUrl.pathname;
     const queryString = queryParams.toString();
     if (queryString) proxyUrl += '?' + queryString;
@@ -900,7 +876,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     };
 
     const fetchHeaders: Record<string, string> = { ...headersObj };
-    if (useFormData) delete fetchHeaders['Content-Type'];
+    if (useFormData) deleteHeader(fetchHeaders, 'Content-Type');
 
     const startTime = performance.now();
     const response = await fetch(proxyUrl, {
@@ -924,7 +900,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     };
   }
 
-  const executeRequest = useCallback(async () => {
+  const executeRequest = async () => {
     const req = state.request;
     setState(prev => ({ ...prev, isExecuting: true }));
 
@@ -944,7 +920,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       saveToHistory(updatedRequest);
       setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
     }
-  }, [state.request, saveToHistory, buildMcpProxyPath, buildOpenAIProxyPath]);
+  };
 
   // History actions
   const loadFromHistory = useCallback((entry: Request) => {
@@ -962,6 +938,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         headers: [...entry.http.headers],
         query: [...entry.http.query],
         body: entry.http.body,
+        options: entry.http.options,
         request: entry.http.request,
         response: entry.http.response,
       };
@@ -999,6 +976,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   const deleteHistoryEntry = useCallback(async (id: string) => {
     requestsCollection.delete(id);
+    // If we just deleted the active request, replace it so the editor isn't orphaned.
+    setState(prev => {
+      if (prev.request.id !== id) return prev;
+      return { ...prev, request: createNewRequest() };
+    });
   }, []);
 
   const toggleSidebar = useCallback(() => {
@@ -1041,7 +1023,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setMcpHeaders,
     discoverMcpFeatures,
     setOpenAIModel,
-    setOpenAIModels,
     setOpenAIApiKey,
     setOpenAIBodyType,
     setOpenAIChatInput,

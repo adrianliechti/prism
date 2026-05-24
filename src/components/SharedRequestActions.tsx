@@ -1,6 +1,6 @@
 import { useClient } from '../context/useClient';
-import { RequestBarActions } from '../context/RequestBarPortal';
-import { Sparkles } from 'lucide-react';
+import { RequestBarActions } from '../context/RequestBarActions';
+import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import { getConfig } from '../config';
 
 export function SharedRequestActions() {
@@ -34,7 +34,11 @@ export function SharedRequestActions() {
   
   // Check if OpenAI has valid input
   const openaiHasValidInput = request?.openai?.chat
-    ? openaiChatInput.length > 0 && openaiChatInput.some(msg => msg.content.length > 0)
+    ? openaiChatInput.some(msg => msg.content.some(content => (
+        content.type === 'text'
+          ? content.text.trim().length > 0
+          : content.data.length > 0
+      )))
     : request?.openai?.image
       ? openaiImagePrompt.trim().length > 0
       : request?.openai?.transcription
@@ -42,6 +46,28 @@ export function SharedRequestActions() {
         : request?.openai?.embeddings
           ? openaiEmbeddingsInput.some(item => item.text.trim().length > 0)
           : openaiAudioText.trim().length > 0;
+
+  const disabledReason = isLoading
+    ? 'Request is running'
+    : protocol === 'rest' && !url
+      ? 'Enter a request URL'
+      : protocol === 'grpc' && !grpcHost
+        ? 'Enter a gRPC host'
+        : protocol === 'grpc' && !grpcService
+          ? 'Select a gRPC service'
+          : protocol === 'grpc' && !grpcMethod
+            ? 'Select a gRPC method'
+            : protocol === 'mcp' && !url
+              ? 'Enter an MCP server URL'
+              : protocol === 'mcp' && !mcpHasToolOrResource
+                ? 'Select an MCP tool or resource'
+                : protocol === 'openai' && !url
+                  ? 'Enter an OpenAI base URL'
+                  : protocol === 'openai' && !openaiModel
+                    ? 'Select an OpenAI model'
+                    : protocol === 'openai' && !openaiHasValidInput
+                      ? 'Enter request input'
+                      : 'Send request';
 
   // Check if we can execute
   const canExecute = protocol === 'rest'
@@ -63,17 +89,12 @@ export function SharedRequestActions() {
         onClick={handleSubmit}
         disabled={isLoading || !canExecute}
         className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
-        title="Send request"
+        title={disabledReason}
       >
         {isLoading ? (
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
+          <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-          </svg>
+          <ArrowRight className="w-4 h-4" />
         )}
       </button>
       {hasAiModel && (

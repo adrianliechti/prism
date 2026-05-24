@@ -65,9 +65,17 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
   const [activeTab, setActiveTab] = useState<'tools' | 'resources'>('tools');
   const [features, setFeatures] = useState<{ tools: McpFeature[]; resources: McpFeature[]; error?: string } | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
+  const [filter, setFilter] = useState('');
 
   const tools = features?.tools || [];
   const resources = features?.resources || [];
+  const normalizedFilter = filter.trim().toLowerCase();
+  const filteredTools = normalizedFilter
+    ? tools.filter((tool) => `${tool.name} ${tool.description ?? ''}`.toLowerCase().includes(normalizedFilter))
+    : tools;
+  const filteredResources = normalizedFilter
+    ? resources.filter((resource) => `${resource.name} ${resource.uri ?? ''} ${resource.description ?? ''}`.toLowerCase().includes(normalizedFilter))
+    : resources;
   const error = features?.error;
 
   const handleDiscover = async () => {
@@ -154,17 +162,29 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
+      <div className="p-2 border-b border-neutral-200 dark:border-white/10 shrink-0">
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-md">
+          <Search className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter features"
+            className="flex-1 min-w-0 bg-transparent text-sm text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none"
+          />
+        </div>
+      </div>
 
       {/* Feature list */}
       <div className="flex-1 overflow-auto p-2 space-y-2">
         {activeTab === 'tools' && (
           <>
-            {tools.length === 0 ? (
+            {filteredTools.length === 0 ? (
               <p className="text-sm text-neutral-500 dark:text-neutral-400 text-center py-4">
-                No tools available
+                {tools.length === 0 ? 'No tools available' : 'No matching tools'}
               </p>
             ) : (
-              tools.map((tool: McpFeature) => (
+              filteredTools.map((tool: McpFeature) => (
                 <FeatureItem
                   key={tool.name}
                   feature={tool}
@@ -181,20 +201,20 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
         )}
         {activeTab === 'resources' && (
           <>
-            {resources.length === 0 ? (
+            {filteredResources.length === 0 ? (
               <p className="text-sm text-neutral-500 dark:text-neutral-400 text-center py-4">
-                No resources available
+                {resources.length === 0 ? 'No resources available' : 'No matching resources'}
               </p>
             ) : (
-              resources.map((resource: McpFeature) => (
+              filteredResources.map((resource: McpFeature) => (
                 <FeatureItem
                   key={resource.name}
                   feature={resource}
                   type="resource"
-                  isSelected={request.mcp?.resource?.uri === (resource.schema?.uri as string || resource.name)}
+                  isSelected={request.mcp?.resource?.uri === resource.uri}
                   onSelect={() => {
-                    const uri = resource.schema?.uri as string || resource.name;
-                    setMcpResource({ uri });
+                    if (!resource.uri) return;
+                    setMcpResource({ uri: resource.uri });
                     onSelected?.();
                   }}
                 />

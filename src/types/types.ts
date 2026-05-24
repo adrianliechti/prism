@@ -9,6 +9,8 @@ export interface McpFeature {
   name: string;
   description?: string;
   schema?: Record<string, unknown>;
+  uri?: string;
+  mimeType?: string;
 }
 
 export interface McpListFeaturesResponse {
@@ -128,6 +130,7 @@ export interface HttpRequestData {
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;
+  options: HttpRequest['options'];
   request: HttpRequest | null;
   response: HttpResponse | null;
 }

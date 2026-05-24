@@ -86,10 +86,10 @@ function GrpcSelector({
         type="button"
         onClick={handleOpen}
         disabled={disabled}
-        className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded"
+        className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded max-w-[28vw]"
       >
         {icon}
-        <span className={`text-sm whitespace-nowrap ${value ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
+        <span className={`text-sm whitespace-nowrap truncate ${value ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
           {value || placeholder}
         </span>
         {isLoading ? (

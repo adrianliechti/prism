@@ -1,12 +1,15 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 
 interface ImageViewerProps {
   content: Blob;
 }
 
 export function ImageViewer({ content }: ImageViewerProps) {
-  // Create object URL from Blob
   const dataUrl = useMemo(() => URL.createObjectURL(content), [content]);
+
+  useEffect(() => {
+    return () => URL.revokeObjectURL(dataUrl);
+  }, [dataUrl]);
 
   return (
     <div className="h-full">

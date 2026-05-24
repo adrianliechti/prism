@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,8 +17,21 @@ type DataEntry struct {
 	Updated *time.Time `json:"updated,omitempty"`
 }
 
+// safeNameRegex restricts store and id names to a safe character set so they
+// cannot be used for path traversal (e.g. "../etc/passwd").
+var safeNameRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+func validName(name string) bool {
+	return safeNameRegex.MatchString(name)
+}
+
 func (s *Server) handleDataList(w http.ResponseWriter, r *http.Request) {
 	store := r.PathValue("store")
+
+	if !validName(store) {
+		http.Error(w, "invalid store name", http.StatusBadRequest)
+		return
+	}
 
 	dir := filepath.Join(getDataDir(), store)
 
@@ -67,6 +81,11 @@ func (s *Server) handleDataGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	store := r.PathValue("store")
 
+	if !validName(store) || !validName(id) {
+		http.Error(w, "invalid store or id", http.StatusBadRequest)
+		return
+	}
+
 	filePath := filepath.Join(getDataDir(), store, id+".json")
 
 	data, err := os.ReadFile(filePath)
@@ -88,6 +107,11 @@ func (s *Server) handleDataGet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDataPut(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	store := r.PathValue("store")
+
+	if !validName(store) || !validName(id) {
+		http.Error(w, "invalid store or id", http.StatusBadRequest)
+		return
+	}
 
 	body, err := io.ReadAll(r.Body)
 
@@ -113,7 +137,7 @@ func (s *Server) handleDataPut(w http.ResponseWriter, r *http.Request) {
 
 	filePath := filepath.Join(dir, id+".json")
 
-	if err := os.WriteFile(filePath, body, 0644); err != nil {
+	if err := writeFileAtomic(filePath, body, 0644); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -121,9 +145,45 @@ func (s *Server) handleDataPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// writeFileAtomic writes via temp file + rename so a crash mid-write doesn't corrupt the original.
+func writeFileAtomic(path string, body []byte, perm os.FileMode) error {
+	dir, name := filepath.Split(path)
+	tmp, err := os.CreateTemp(dir, name+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}
+	if _, err := tmp.Write(body); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 func (s *Server) handleDataDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	store := r.PathValue("store")
+
+	if !validName(store) || !validName(id) {
+		http.Error(w, "invalid store or id", http.StatusBadRequest)
+		return
+	}
 
 	filePath := filepath.Join(getDataDir(), store, id+".json")
 

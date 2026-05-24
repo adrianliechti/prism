@@ -30,6 +30,8 @@ type McpFeature struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Schema      json.RawMessage `json:"schema,omitempty"`
+	URI         string          `json:"uri,omitempty"`
+	MimeType    string          `json:"mimeType,omitempty"`
 }
 
 type McpListFeaturesResponse struct {

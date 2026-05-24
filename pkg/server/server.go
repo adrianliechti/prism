@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/adrianliechti/prism"
 	"github.com/adrianliechti/prism/pkg/config"
@@ -78,25 +80,41 @@ func New(cfg *config.Config) (*Server, error) {
 
 	mux.Handle("/", http.FileServerFS(prism.DistFS))
 
-	return &Server{
-		Handler: mux,
-	}, nil
+	return s, nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return s.Serve(ctx, listener)
+}
+
+// Serve runs until ctx is cancelled, then shuts down gracefully with a timeout.
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	srv := &http.Server{
-		Addr:    addr,
 		Handler: s,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
 	}()
 
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return nil
+	case err := <-serverErr:
 		return err
 	}
-
-	return nil
 }

@@ -125,22 +125,21 @@ type KeyValueInput = z.infer<typeof keyValueArraySchema>;
 type SetToolInput = z.infer<typeof setToolSchema>;
 type SetResourceInput = z.infer<typeof setResourceSchema>;
 
-// Create MCP tools
+// Tool closures read environment.X at call time, so environment must be a stable
+// object whose fields are mutated in place when values change.
 export function createTools(environment: McpToolsEnvironment) {
-  const { request, setters } = environment;
-
   const getRequest = getRequestDef.client(async () => {
-    return formatRequestForAI(request);
+    return formatRequestForAI(environment.request);
   });
 
   const getResponse = getResponseDef.client(async () => {
-    const response = formatResponseForAI(request);
+    const response = formatResponseForAI(environment.request);
     return response || { error: 'No response available. Execute the request first.' };
   });
 
   const setUrl = setUrlDef.client(async (args: unknown) => {
     const input = args as SetUrlInput;
-    setters.setUrl(input.url);
+    environment.setters.setUrl(input.url);
     return { success: true, url: input.url };
   });
 
@@ -153,7 +152,7 @@ export function createTools(environment: McpToolsEnvironment) {
         value: h.value,
         enabled: h.enabled !== false,
       }));
-      setters.setMcpHeaders(headers);
+      environment.setters.setMcpHeaders(headers);
       return { success: true, headerCount: headers.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for headers: ${e instanceof Error ? e.message : 'parse error'}` };
@@ -162,7 +161,7 @@ export function createTools(environment: McpToolsEnvironment) {
 
   const setTool = setToolDef.client(async (args: unknown) => {
     const input = args as SetToolInput;
-    setters.setMcpTool({
+    environment.setters.setMcpTool({
       name: input.name,
       arguments: formatJson(input.arguments),
     });
@@ -171,7 +170,7 @@ export function createTools(environment: McpToolsEnvironment) {
 
   const setResource = setResourceDef.client(async (args: unknown) => {
     const input = args as SetResourceInput;
-    setters.setMcpResource({
+    environment.setters.setMcpResource({
       uri: input.uri,
     });
     return { success: true, resource: input.uri };

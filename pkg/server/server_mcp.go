@@ -123,15 +123,8 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 			feature := McpFeature{
 				Name:        resource.Name,
 				Description: resource.Description,
-			}
-			// Resources don't have a schema, but we include URI info
-			if resource.URI != "" {
-				uriInfo := map[string]string{"uri": resource.URI}
-				if resource.MIMEType != "" {
-					uriInfo["mimeType"] = resource.MIMEType
-				}
-				schemaBytes, _ := json.Marshal(uriInfo)
-				feature.Schema = schemaBytes
+				URI:         resource.URI,
+				MimeType:    resource.MIMEType,
 			}
 			resources = append(resources, feature)
 		}

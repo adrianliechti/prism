@@ -5,9 +5,15 @@ import (
 	"io/fs"
 )
 
-var (
-	//go:embed all:dist
-	distFS embed.FS
+//go:embed all:dist
+var distFS embed.FS
 
-	DistFS, _ = fs.Sub(distFS, "dist")
-)
+var DistFS = mustSub(distFS, "dist")
+
+func mustSub(fsys fs.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		panic("prism: failed to open embedded dist/: " + err.Error())
+	}
+	return sub
+}

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useClient } from '../../context/useClient';
 import { Markdown } from '../Markdown';
 
@@ -38,6 +38,18 @@ export function OpenAIResponseViewer() {
     const blob = base64ToBlob(result.audio, 'audio/mpeg');
     return URL.createObjectURL(blob);
   }, [result]);
+
+  useEffect(() => {
+    return () => {
+      if (imageUrl?.startsWith('blob:')) URL.revokeObjectURL(imageUrl);
+    };
+  }, [imageUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
 
   if (!response) {
     return null;

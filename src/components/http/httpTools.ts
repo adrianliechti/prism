@@ -122,28 +122,27 @@ type SetUrlInput = z.infer<typeof setUrlSchema>;
 type KeyValueInput = z.infer<typeof keyValueArraySchema>;
 type SetBodyInput = z.infer<typeof setBodySchema>;
 
-// Create HTTP tools
+// Tool closures read environment.X at call time, so environment must be a stable
+// object whose fields are mutated in place when values change.
 export function createTools(environment: HttpToolsEnvironment) {
-  const { request, setters, responseBodyText } = environment;
-
   const getRequest = getRequestDef.client(async () => {
-    return formatRequestForAI(request);
+    return formatRequestForAI(environment.request);
   });
 
   const getResponse = getResponseDef.client(async () => {
-    const response = formatResponseForAI(request, responseBodyText);
+    const response = formatResponseForAI(environment.request, environment.responseBodyText);
     return response || { error: 'No response available. Execute the request first.' };
   });
 
   const setMethod = setMethodDef.client(async (args: unknown) => {
     const input = args as SetMethodInput;
-    setters.setMethod(input.method as HttpMethod);
+    environment.setters.setMethod(input.method as HttpMethod);
     return { success: true, method: input.method };
   });
 
   const setUrl = setUrlDef.client(async (args: unknown) => {
     const input = args as SetUrlInput;
-    setters.setUrl(input.url);
+    environment.setters.setUrl(input.url);
     return { success: true, url: input.url };
   });
 
@@ -156,7 +155,7 @@ export function createTools(environment: HttpToolsEnvironment) {
         value: h.value,
         enabled: h.enabled !== false,
       }));
-      setters.setHeaders(headers);
+      environment.setters.setHeaders(headers);
       return { success: true, headerCount: headers.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for headers: ${e instanceof Error ? e.message : 'parse error'}` };
@@ -172,7 +171,7 @@ export function createTools(environment: HttpToolsEnvironment) {
         value: p.value,
         enabled: p.enabled !== false,
       }));
-      setters.setQuery(params);
+      environment.setters.setQuery(params);
       return { success: true, paramCount: params.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for query params: ${e instanceof Error ? e.message : 'parse error'}` };
@@ -197,7 +196,7 @@ export function createTools(environment: HttpToolsEnvironment) {
           body = { type: 'raw', content: input.content || '' };
           break;
         case 'form-urlencoded': {
-          const data: KeyValuePair[] = input.content 
+          const data: KeyValuePair[] = input.content
             ? JSON.parse(input.content).map((p: { key: string; value: string; enabled?: boolean }) => ({
                 id: generateId(),
                 key: p.key,
@@ -226,7 +225,7 @@ export function createTools(environment: HttpToolsEnvironment) {
         default:
           body = { type: 'none' };
       }
-      setters.setBody(body);
+      environment.setters.setBody(body);
       return { success: true, bodyType: input.type };
     } catch (e) {
       return { success: false, error: `Invalid body content: ${e instanceof Error ? e.message : 'parse error'}` };

@@ -60,6 +60,7 @@ interface HttpSettings {
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;
+  options: HttpRequest['options'];
   response?: {
     status: string;
     statusCode: number;
@@ -73,11 +74,10 @@ interface HttpSettings {
 
 // gRPC-specific settings
 interface GrpcSettings {
-  server: string;      // host:port
-  service: string;     // service name
-  method: string;      // method name
+  url: string;         // full grpc:// or grpcs:// URL
   schema?: Record<string, unknown>;
   body: string;        // JSON request body
+  metadata: KeyValuePair[];
   response?: {
     body: string;      // JSON response (plain text, not base64)
     metadata?: Record<string, string>;
@@ -89,7 +89,7 @@ interface GrpcSettings {
 // MCP-specific settings
 interface McpSettings {
   url: string;         // MCP server URL
-  headers?: KeyValuePair[]; // MCP request headers
+  headers: KeyValuePair[]; // MCP request headers
   tool?: {
     name: string;
     arguments: string; // JSON parameters
@@ -177,23 +177,6 @@ function base64ToBlob(base64: string, type: string): Blob {
 // Serialization / Deserialization
 // ============================================================================
 
-// Parse gRPC URL: grpc://host:port/service/method
-function parseGrpcUrl(url: string): { server: string; service: string; method: string } {
-  const match = url.match(/^grpc:\/\/([^/]+)\/(.+)\/([^/]+)$/);
-  if (match) {
-    return { server: match[1], service: match[2], method: match[3] };
-  }
-  return { server: url.replace(/^grpc:\/\//, ''), service: '', method: '' };
-}
-
-// Build gRPC URL from components
-function buildGrpcUrl(server: string, service: string, method: string): string {
-  if (service && method) {
-    return `grpc://${server}/${service}/${method}`;
-  }
-  return `grpc://${server}`;
-}
-
 async function serializeRequest(req: Request): Promise<SerializedRequest> {
   const base: SerializedRequest = {
     id: req.id,
@@ -205,14 +188,11 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
 
   switch (req.protocol) {
     case 'grpc': {
-      const { server, service, method } = parseGrpcUrl(req.url);
-      
       base.grpc = {
-        server,
-        service,
-        method,
+        url: req.url,
         schema: req.grpc?.schema,
         body: req.grpc?.body ?? '',
+        metadata: req.grpc?.metadata ?? [],
         response: req.grpc?.response,
       };
       break;
@@ -220,7 +200,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
     case 'mcp': {
       base.mcp = {
         url: req.url,
-        headers: req.mcp?.headers,
+        headers: req.mcp?.headers ?? [],
         tool: req.mcp?.tool,
         resource: req.mcp?.resource,
         response: req.mcp?.response,
@@ -280,6 +260,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
         query: req.http?.query ?? [],
         headers: req.http?.headers ?? [],
         body: body as RequestBody,
+        options: req.http?.options ?? { insecure: false, redirect: true },
         response: httpResponse,
       };
       break;
@@ -305,18 +286,18 @@ function deserializeRequest(serialized: SerializedRequest): Request {
 
   if (serialized.grpc) {
     const grpc = serialized.grpc;
-    base.url = buildGrpcUrl(grpc.server, grpc.service, grpc.method);
+    base.url = grpc.url;
     base.grpc = {
       schema: grpc.schema,
       body: grpc.body || '',
-      metadata: [],
+      metadata: grpc.metadata,
       response: grpc.response,
     };
   } else if (serialized.mcp) {
     const mcp = serialized.mcp;
     base.url = mcp.url;
     base.mcp = {
-      headers: mcp.headers ?? [],
+      headers: mcp.headers,
       tool: mcp.tool,
       resource: mcp.resource,
       response: mcp.response,
@@ -342,6 +323,7 @@ function deserializeRequest(serialized: SerializedRequest): Request {
       query: http.query,
       headers: http.headers,
       body: http.body,
+      options: http.options,
       request: null,
       response: http.response ? {
         status: http.response.status,

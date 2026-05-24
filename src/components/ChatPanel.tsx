@@ -25,9 +25,6 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
   const [responseBodyText, setResponseBodyText] = useState<string | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  
-  // Track request ID changes to reset chat
-  const prevRequestIdRef = useRef(request.id);
 
   // Read response body text when available (for HTTP protocol)
   useEffect(() => {
@@ -45,38 +42,45 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
       }
     }
     readResponseBody();
-  }, [request.http?.response, request.http?.response?.body]);
+  }, [request.http?.response]);
 
-  // Get protocol-specific tools, instructions, and adapter config
+  // useChat doesn't propagate tools/connection updates after mount, so tools must
+  // read live state via a stable env object that we patch each render.
+  const envRef = useRef({ request, setters, responseBodyText });
+  envRef.current.request = request;
+  envRef.current.setters = setters;
+  envRef.current.responseBodyText = responseBodyText;
+
   const { tools, instructions, adapterConfig } = useMemo(() => {
+    const env = envRef.current;
     switch (request.protocol) {
       case 'grpc':
         return {
-          tools: createGrpcTools({ request, setters }),
+          tools: createGrpcTools(env),
           instructions: getGrpcInstructions(),
           adapterConfig: grpcAdapterConfig,
         };
       case 'mcp':
         return {
-          tools: createMcpTools({ request, setters }),
+          tools: createMcpTools(env),
           instructions: getMcpInstructions(),
           adapterConfig: mcpAdapterConfig,
         };
       case 'openai':
         return {
-          tools: createOpenAITools({ request, setters }),
+          tools: createOpenAITools(env),
           instructions: getOpenAIInstructions(),
           adapterConfig: openaiAdapterConfig,
         };
       case 'rest':
       default:
         return {
-          tools: createHttpTools({ request, setters, responseBodyText }),
+          tools: createHttpTools(env),
           instructions: getHttpInstructions(),
           adapterConfig: httpAdapterConfig,
         };
     }
-  }, [request, setters, responseBodyText]);
+  }, [request.protocol]);
 
   // Create connection adapter that wraps the chat() function
   const connection = useMemo(() => {
@@ -99,14 +103,6 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     connection,
     tools,
   });
-
-  // Reset chat when request ID changes
-  useEffect(() => {
-    if (prevRequestIdRef.current !== request.id) {
-      clear();
-      prevRequestIdRef.current = request.id;
-    }
-  }, [request.id, clear]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {

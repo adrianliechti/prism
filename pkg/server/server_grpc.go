@@ -173,7 +173,7 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 			m := methods.Get(j)
 			methodRef := MethodReflection{
 				Name:   string(m.Name()),
-				Schema: buildMessageSchema(m.Input()),
+				Schema: buildMessageSchema(m.Input(), map[protoreflect.FullName]bool{}),
 			}
 			svcReflection.Methods = append(svcReflection.Methods, methodRef)
 		}
@@ -185,12 +185,20 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// buildMessageSchema creates a JSON Schema-like representation of a protobuf message
-func buildMessageSchema(msg protoreflect.MessageDescriptor) map[string]interface{} {
+// buildMessageSchema creates a JSON Schema-like representation of a protobuf message.
+// visited breaks recursion for self-referential types (e.g. tree nodes).
+func buildMessageSchema(msg protoreflect.MessageDescriptor, visited map[protoreflect.FullName]bool) map[string]interface{} {
 	schema := map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
 	}
+
+	if visited[msg.FullName()] {
+		schema["description"] = "recursive type " + string(msg.FullName())
+		return schema
+	}
+	visited[msg.FullName()] = true
+	defer delete(visited, msg.FullName())
 
 	properties := schema["properties"].(map[string]interface{})
 	fields := msg.Fields()
@@ -198,31 +206,31 @@ func buildMessageSchema(msg protoreflect.MessageDescriptor) map[string]interface
 	for i := 0; i < fields.Len(); i++ {
 		field := fields.Get(i)
 		fieldName := string(field.JSONName())
-		properties[fieldName] = buildFieldSchema(field)
+		properties[fieldName] = buildFieldSchema(field, visited)
 	}
 
 	return schema
 }
 
-func buildFieldSchema(field protoreflect.FieldDescriptor) map[string]interface{} {
+func buildFieldSchema(field protoreflect.FieldDescriptor, visited map[protoreflect.FullName]bool) map[string]interface{} {
 	schema := map[string]interface{}{}
 
 	if field.IsList() {
 		schema["type"] = "array"
-		schema["items"] = buildScalarSchema(field)
+		schema["items"] = buildScalarSchema(field, visited)
 		return schema
 	}
 
 	if field.IsMap() {
 		schema["type"] = "object"
-		schema["additionalProperties"] = buildScalarSchema(field.MapValue())
+		schema["additionalProperties"] = buildScalarSchema(field.MapValue(), visited)
 		return schema
 	}
 
-	return buildScalarSchema(field)
+	return buildScalarSchema(field, visited)
 }
 
-func buildScalarSchema(field protoreflect.FieldDescriptor) map[string]interface{} {
+func buildScalarSchema(field protoreflect.FieldDescriptor, visited map[protoreflect.FullName]bool) map[string]interface{} {
 	schema := map[string]interface{}{}
 
 	switch field.Kind() {
@@ -260,8 +268,7 @@ func buildScalarSchema(field protoreflect.FieldDescriptor) map[string]interface{
 		}
 		schema["enum"] = values
 	case protoreflect.MessageKind:
-		// Recursively build nested message schema
-		return buildMessageSchema(field.Message())
+		return buildMessageSchema(field.Message(), visited)
 	default:
 		schema["type"] = "string"
 	}

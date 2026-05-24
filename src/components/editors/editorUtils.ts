@@ -222,9 +222,9 @@ export function createChip(
   chip.contentEditable = 'false';
   chip.className = `variable-chip inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded text-xs font-medium align-baseline select-none ${
     needsConfig && !isConfigured 
-      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
-      : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-  } ${needsConfig ? 'cursor-pointer hover:bg-blue-500/30' : ''}`;
+      ? 'bg-amber-100 text-amber-700 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30' 
+      : 'bg-blue-100 text-blue-700 border border-blue-300 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30'
+  } ${needsConfig ? 'cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-500/30' : ''}`;
   chip.dataset.marker = marker;
   chip.dataset.variableType = type;
   chip.dataset.variableId = id;
