@@ -12,6 +12,11 @@ node_modules
 #dist-ssr
 *.local
 
+# goreleaser output (distinct from the tracked dist/ frontend build, which is
+# embedded via go:embed)
+/dist-app
+/dist-cli
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
