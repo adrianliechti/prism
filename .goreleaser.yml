@@ -1,0 +1,99 @@
+version: 2
+
+# Dedicated dist dir: the frontend build (before hook) writes into the tracked
+# dist/ folder at repo root (embedded via go:embed), so GoReleaser's own
+# working directory must not collide with it.
+dist: dist-cli
+
+before:
+  hooks:
+    - sh -c 'npm ci && npm run build'
+    - go mod tidy
+
+builds:
+  - id: prism
+    binary: prism
+    main: ./cmd/prism
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: prism
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # Windows users expect zip.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+report_sizes: true
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+# macOS: Homebrew cask (formula `brews` was deprecated in GoReleaser v2).
+homebrew_casks:
+  - name: prism-cli
+    # The installed command stays `prism` (the built binary name).
+    binaries: [prism]
+    repository:
+      owner: adrianliechti
+      name: homebrew-tap
+
+    commit_author:
+      name: Adrian Liechti
+      email: adrian@localhost
+
+    homepage: "https://github.com/adrianliechti/prism"
+    description: "Insomnia/Postman-like API client, running locally in your browser"
+
+    # Unsigned binary: strip the macOS quarantine attribute so it runs without
+    # a Gatekeeper prompt. (Casks only install on macOS; the guard is defensive.)
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/prism"]
+          end
+
+# append: land in an existing release for the tag (or create it), so the CLI
+# and desktop app release flows (.goreleaser.app.yml) don't clash.
+release:
+  github:
+    owner: adrianliechti
+    name: prism
+  mode: append
