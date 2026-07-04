@@ -229,34 +229,33 @@ type SetImagePromptInput = z.infer<typeof setImagePromptSchema>;
 type SetAudioInput = z.infer<typeof setAudioSchema>;
 type SetEmbeddingsInputInput = z.infer<typeof setEmbeddingsInputSchema>;
 
-// Create OpenAI tools
+// Tool closures read environment.X at call time, so environment must be a stable
+// object whose fields are mutated in place when values change.
 export function createTools(environment: OpenAIToolsEnvironment) {
-  const { request, setters } = environment;
-
   const getRequest = getRequestDef.client(async () => {
-    return formatRequestForAI(request);
+    return formatRequestForAI(environment.request);
   });
 
   const getResponse = getResponseDef.client(async () => {
-    const response = formatResponseForAI(request);
+    const response = formatResponseForAI(environment.request);
     return response || { error: 'No response available. Execute the request first.' };
   });
 
   const setUrl = setUrlDef.client(async (args: unknown) => {
     const input = args as SetUrlInput;
-    setters.setUrl(input.url);
+    environment.setters.setUrl(input.url);
     return { success: true, url: input.url };
   });
 
   const setModel = setModelDef.client(async (args: unknown) => {
     const input = args as SetModelInput;
-    setters.setOpenAIModel(input.model);
+    environment.setters.setOpenAIModel(input.model);
     return { success: true, model: input.model };
   });
 
   const setBodyType = setBodyTypeDef.client(async (args: unknown) => {
     const input = args as SetBodyTypeInput;
-    setters.setOpenAIBodyType(input.bodyType);
+    environment.setters.setOpenAIBodyType(input.bodyType);
     return { success: true, bodyType: input.bodyType };
   });
 
@@ -268,7 +267,7 @@ export function createTools(environment: OpenAIToolsEnvironment) {
         role: m.role,
         content: [{ type: 'text' as const, text: m.content }],
       }));
-      setters.setOpenAIChatInput(messages);
+      environment.setters.setOpenAIChatInput(messages);
       return { success: true, messageCount: messages.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for messages: ${e instanceof Error ? e.message : 'parse error'}` };
@@ -277,15 +276,15 @@ export function createTools(environment: OpenAIToolsEnvironment) {
 
   const setImagePrompt = setImagePromptDef.client(async (args: unknown) => {
     const input = args as SetImagePromptInput;
-    setters.setOpenAIImagePrompt(input.prompt);
+    environment.setters.setOpenAIImagePrompt(input.prompt);
     return { success: true };
   });
 
   const setAudio = setAudioDef.client(async (args: unknown) => {
     const input = args as SetAudioInput;
-    setters.setOpenAIAudioText(input.text);
+    environment.setters.setOpenAIAudioText(input.text);
     if (input.voice) {
-      setters.setOpenAIAudioVoice(input.voice);
+      environment.setters.setOpenAIAudioVoice(input.voice);
     }
     return { success: true, voice: input.voice || 'alloy' };
   });
@@ -298,7 +297,7 @@ export function createTools(environment: OpenAIToolsEnvironment) {
         id: generateId(),
         text,
       }));
-      setters.setOpenAIEmbeddingsInput(embeddings);
+      environment.setters.setOpenAIEmbeddingsInput(embeddings);
       return { success: true, inputCount: embeddings.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for inputs: ${e instanceof Error ? e.message : 'parse error'}` };

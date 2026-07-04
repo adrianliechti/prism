@@ -83,28 +83,27 @@ type SetUrlInput = z.infer<typeof setUrlSchema>;
 type SetBodyInput = z.infer<typeof setBodySchema>;
 type KeyValueInput = z.infer<typeof keyValueArraySchema>;
 
-// Create gRPC tools
+// Tool closures read environment.X at call time, so environment must be a stable
+// object whose fields are mutated in place when values change.
 export function createTools(environment: GrpcToolsEnvironment) {
-  const { request, setters } = environment;
-
   const getRequest = getRequestDef.client(async () => {
-    return formatRequestForAI(request);
+    return formatRequestForAI(environment.request);
   });
 
   const getResponse = getResponseDef.client(async () => {
-    const response = formatResponseForAI(request);
+    const response = formatResponseForAI(environment.request);
     return response || { error: 'No response available. Execute the request first.' };
   });
 
   const setUrl = setUrlDef.client(async (args: unknown) => {
     const input = args as SetUrlInput;
-    setters.setUrl(input.url);
+    environment.setters.setUrl(input.url);
     return { success: true, url: input.url };
   });
 
   const setBody = setBodyDef.client(async (args: unknown) => {
     const input = args as SetBodyInput;
-    setters.setGrpcBody(formatJson(input.body));
+    environment.setters.setGrpcBody(formatJson(input.body));
     return { success: true };
   });
 
@@ -117,7 +116,7 @@ export function createTools(environment: GrpcToolsEnvironment) {
         value: m.value,
         enabled: m.enabled !== false,
       }));
-      setters.setGrpcMetadata(metadata);
+      environment.setters.setGrpcMetadata(metadata);
       return { success: true, metadataCount: metadata.length };
     } catch (e) {
       return { success: false, error: `Invalid JSON for metadata: ${e instanceof Error ? e.message : 'parse error'}` };

@@ -1,3 +1,34 @@
+import type { KeyValuePair } from '../types/types';
+
+export function kvToRecord(
+  pairs: KeyValuePair[],
+  transform: (text: string) => string = (text) => text,
+): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const kv of pairs) {
+    if (kv.enabled && kv.key) {
+      record[transform(kv.key)] = transform(kv.value);
+    }
+  }
+  return record;
+}
+
+/**
+ * Decode a response blob honoring the charset declared in its Content-Type
+ * (Blob.text() always assumes UTF-8, which garbles e.g. ISO-8859-1 bodies).
+ */
+export async function decodeBlobText(blob: Blob): Promise<string> {
+  const charset = /charset=["']?([^;"' ]+)/i.exec(blob.type)?.[1]?.toLowerCase();
+  if (!charset || charset === 'utf-8' || charset === 'utf8') {
+    return blob.text();
+  }
+  try {
+    return new TextDecoder(charset).decode(await blob.arrayBuffer());
+  } catch {
+    return blob.text();
+  }
+}
+
 export function getStatusBadge(statusCode: number): string {
   if (statusCode >= 200 && statusCode < 300) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
   if (statusCode >= 300 && statusCode < 400) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';

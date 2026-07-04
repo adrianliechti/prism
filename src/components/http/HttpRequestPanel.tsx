@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useClient } from '../../context/useClient';
 import { KeyValueEditor, FormDataEditor, BinaryUploader, CodeEditor, JsonEditor, XmlEditor } from '../editors';
 import type { RequestBody, FormDataField } from '../../types/types';
+import { RotateCw, ShieldAlert } from 'lucide-react';
 
 type Tab = 'headers' | 'params' | 'body';
 type BodyType = RequestBody['type'];
@@ -72,11 +73,12 @@ const commonHttpHeaders = [
 
 export function HttpRequestPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('body');
-  const { request, setHeaders, setQuery, setBody, setVariables } = useClient();
+  const { request, setHeaders, setQuery, setBody, setVariables, setOptions } = useClient();
 
   const headers = request?.http?.headers ?? [];
   const query = request?.http?.query ?? [];
   const body = request?.http?.body ?? { type: 'none' as const };
+  const options = request?.http?.options ?? { insecure: false, redirect: true };
   const variables = request?.variables ?? [];
 
   const handleBodyTypeChange = (type: BodyType) => {
@@ -149,6 +151,33 @@ export function HttpRequestPanel() {
             ))}
           </select>
         )}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setOptions({ redirect: !options.redirect })}
+          className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+            options.redirect
+              ? 'bg-white dark:bg-white/10 text-neutral-700 dark:text-neutral-200 shadow-sm'
+              : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
+          }`}
+          title={options.redirect ? 'Following redirects' : 'Not following redirects'}
+        >
+          <RotateCw className="w-3.5 h-3.5" />
+          Redirects
+        </button>
+        <button
+          type="button"
+          onClick={() => setOptions({ insecure: !options.insecure })}
+          className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md transition-colors ${
+            options.insecure
+              ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 shadow-sm'
+              : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
+          }`}
+          title={options.insecure ? 'TLS verification disabled' : 'TLS verification enabled'}
+        >
+          <ShieldAlert className="w-3.5 h-3.5" />
+          Insecure TLS
+        </button>
       </div>
 
       {/* Tab Content */}

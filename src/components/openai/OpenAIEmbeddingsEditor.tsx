@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useClient } from '../../context/useClient';
 import { Trash2 } from 'lucide-react';
 import type { OpenAIEmbeddingsInput } from '../../types/types';
@@ -17,10 +18,18 @@ function isInputEmpty(input: OpenAIEmbeddingsInput): boolean {
   return !input.text.trim();
 }
 
+const EMPTY_EMBEDDINGS_INPUT: OpenAIEmbeddingsInput[] = [];
+
 export function OpenAIEmbeddingsEditor() {
   const { request, setOpenAIEmbeddingsInput } = useClient();
   
-  const embeddingsInput = request?.openai?.embeddings?.input ?? [];
+  const embeddingsInput = request?.openai?.embeddings?.input ?? EMPTY_EMBEDDINGS_INPUT;
+
+  useEffect(() => {
+    if (embeddingsInput.length === 0) {
+      setOpenAIEmbeddingsInput([createEmptyInput()]);
+    }
+  }, [embeddingsInput, setOpenAIEmbeddingsInput]);
 
   const updateInput = (id: string, text: string) => {
     const newInput = embeddingsInput.map((item) =>

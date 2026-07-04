@@ -32,6 +32,7 @@ tasks:
   
   start:
     cmds:
+      - npm run build
       - go run ./cmd/prism
 
   client:

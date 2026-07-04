@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHighlighter, highlightedCodeClasses } from './useHighlighter';
+import { decodeBlobText } from '../../utils/format';
 
 interface YamlViewerProps {
   content: Blob;
@@ -10,7 +11,7 @@ export function YamlViewer({ content }: YamlViewerProps) {
 
   useEffect(() => {
     let cancelled = false;
-    content.text().then((text) => {
+    decodeBlobText(content).then((text) => {
       if (!cancelled) setCode(text);
     });
     return () => { cancelled = true; };

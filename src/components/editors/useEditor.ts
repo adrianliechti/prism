@@ -112,8 +112,13 @@ export function useEditor({
     isInternalChange.current = false;
   }, [value, buildDOM]);
 
-  // Rebuild when variables change
+  // Rebuild when variables change. buildDOM's identity changes on every
+  // keystroke (it depends on value), so guard on the variables reference —
+  // otherwise the DOM is rebuilt per keypress, which breaks IME composition.
+  const prevVariablesRef = useRef(variables);
   useEffect(() => {
+    if (prevVariablesRef.current === variables) return;
+    prevVariablesRef.current = variables;
     if (skipVariableRebuildRef.current) {
       skipVariableRebuildRef.current = false;
     } else {

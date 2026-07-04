@@ -17,16 +17,17 @@ interface GrpcReflectResponse {
 }
 
 // Cache for reflection data
-let reflectionCache: { host: string; data: GrpcReflectResponse } | null = null;
+let reflectionCache: { key: string; data: GrpcReflectResponse } | null = null;
 
-async function fetchReflection(host: string): Promise<GrpcReflectResponse> {
-  if (reflectionCache?.host === host) {
+async function fetchReflection(scheme: string, host: string): Promise<GrpcReflectResponse> {
+  const key = `${scheme}://${host}`;
+  if (reflectionCache?.key === key) {
     return reflectionCache.data;
   }
-  const response = await fetch(`/proxy/grpc/${host}`);
+  const response = await fetch(`/proxy/grpc/${scheme}/${host}`);
   if (!response.ok) throw new Error('Failed to fetch services');
   const data: GrpcReflectResponse = await response.json();
-  reflectionCache = { host, data };
+  reflectionCache = { key, data };
   return data;
 }
 
@@ -85,10 +86,10 @@ function GrpcSelector({
         type="button"
         onClick={handleOpen}
         disabled={disabled}
-        className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded"
+        className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded max-w-[28vw]"
       >
         {icon}
-        <span className={`text-sm whitespace-nowrap ${value ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
+        <span className={`text-sm whitespace-nowrap truncate ${value ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
           {value || placeholder}
         </span>
         {isLoading ? (
@@ -143,38 +144,38 @@ export function GrpcRequestBar() {
   const { request, setUrl, setGrpcMethodSchema } = useClient();
   const url = request?.url ?? '';
 
-  // Parse grpc:// URL into parts
-  const parseGrpcUrl = (grpcUrl: string): { host: string; service: string; method: string } => {
-    const match = grpcUrl.match(/^grpc:\/\/([^/]*)(?:\/([^/]*)(?:\/([^/]*))?)?$/);
+  // Parse grpc:// or grpcs:// URL into parts
+  const parseGrpcUrl = (grpcUrl: string): { scheme: string; host: string; service: string; method: string } => {
+    const match = grpcUrl.match(/^(grpcs?):\/\/([^/]*)(?:\/([^/]*)(?:\/([^/]*))?)?$/);
     if (match) {
-      return { host: match[1] || '', service: match[2] || '', method: match[3] || '' };
+      return { scheme: match[1] || 'grpc', host: match[2] || '', service: match[3] || '', method: match[4] || '' };
     }
-    return { host: '', service: '', method: '' };
+    return { scheme: 'grpc', host: '', service: '', method: '' };
   };
 
   // Build grpc:// URL from parts
-  const buildGrpcUrl = (host: string, service: string, method: string): string => {
-    if (!host) return 'grpc://';
-    if (!service) return `grpc://${host}`;
-    if (!method) return `grpc://${host}/${service}`;
-    return `grpc://${host}/${service}/${method}`;
+  const buildGrpcUrl = (scheme: string, host: string, service: string, method: string): string => {
+    if (!host) return `${scheme}://`;
+    if (!service) return `${scheme}://${host}`;
+    if (!method) return `${scheme}://${host}/${service}`;
+    return `${scheme}://${host}/${service}/${method}`;
   };
 
-  const { host: grpcHost, service: grpcService, method: grpcMethod } = parseGrpcUrl(url);
+  const { scheme: grpcScheme, host: grpcHost, service: grpcService, method: grpcMethod } = parseGrpcUrl(url);
 
   const setGrpcHost = (host: string) => {
-    setUrl(buildGrpcUrl(host, '', ''));
+    setUrl(buildGrpcUrl(grpcScheme, host, '', ''));
     setGrpcMethodSchema(undefined);
   };
   const setGrpcService = (service: string) => {
-    setUrl(buildGrpcUrl(grpcHost, service, ''));
+    setUrl(buildGrpcUrl(grpcScheme, grpcHost, service, ''));
     setGrpcMethodSchema(undefined);
   };
   const setGrpcMethod = async (method: string) => {
-    setUrl(buildGrpcUrl(grpcHost, grpcService, method));
+    setUrl(buildGrpcUrl(grpcScheme, grpcHost, grpcService, method));
     // Fetch and store the schema
     try {
-      const data = await fetchReflection(grpcHost);
+      const data = await fetchReflection(grpcScheme, grpcHost);
       const service = data.services.find(s => s.name === grpcService);
       const methodData = service?.methods.find(m => m.name === method);
       if (methodData?.schema) {
@@ -190,14 +191,14 @@ export function GrpcRequestBar() {
   // Fetch services for current host
   const fetchServices = async (): Promise<string[]> => {
     if (!grpcHost) return [];
-    const data = await fetchReflection(grpcHost);
+    const data = await fetchReflection(grpcScheme, grpcHost);
     return data.services.map(s => s.name);
   };
 
   // Fetch methods for current service
   const fetchMethods = async (): Promise<string[]> => {
     if (!grpcHost || !grpcService) return [];
-    const data = await fetchReflection(grpcHost);
+    const data = await fetchReflection(grpcScheme, grpcHost);
     const service = data.services.find(s => s.name === grpcService);
     return service?.methods.map(m => m.name) ?? [];
   };

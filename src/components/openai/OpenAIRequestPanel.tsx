@@ -3,6 +3,7 @@ import { OpenAIChatEditor } from './OpenAIChatEditor';
 import { OpenAIEmbeddingsEditor } from './OpenAIEmbeddingsEditor';
 import { OpenAIImageEditor } from './OpenAIImageEditor';
 import type { OpenAIBodyType } from '../../types/types';
+import { FileAudio, Image, MessageSquare, Mic, Rows3 } from 'lucide-react';
 
 type Tab = 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings';
 
@@ -13,25 +14,25 @@ export function OpenAIRequestPanel() {
     setOpenAIImagePrompt,
     setOpenAIAudioText,
     setOpenAIAudioVoice,
-    setOpenAITranscriptionFile
+    setOpenAITranscriptionFile,
   } = useClient();
   
   const isChat = !!request?.openai?.chat;
   const isImage = !!request?.openai?.image;
   const isAudio = !!request?.openai?.audio;
   const isTranscription = !!request?.openai?.transcription;
-  const bodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : isTranscription ? 'transcription' : 'embeddings';
+  const bodyType: OpenAIBodyType = isChat ? 'chat' : isImage ? 'image' : isAudio ? 'audio' : isTranscription ? 'transcription' : 'embeddings';
   const imagePrompt = request?.openai?.image?.prompt ?? '';
   const audioText = request?.openai?.audio?.text ?? '';
   const audioVoice = request?.openai?.audio?.voice ?? 'alloy';
   const transcriptionFile = request?.openai?.transcription?.file ?? '';
 
-  const tabs = [
-    { id: 'chat' as Tab, label: 'Chat' },
-    { id: 'audio' as Tab, label: 'Audio' },
-    { id: 'image' as Tab, label: 'Image' },
-    { id: 'transcription' as Tab, label: 'Transcription' },
-    { id: 'embeddings' as Tab, label: 'Embeddings' },
+  const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'image', label: 'Image', icon: Image },
+    { id: 'audio', label: 'Audio', icon: FileAudio },
+    { id: 'transcription', label: 'Transcription', icon: Mic },
+    { id: 'embeddings', label: 'Embeddings', icon: Rows3 },
   ];
 
   const handleTabChange = (tab: Tab) => {
@@ -43,20 +44,24 @@ export function OpenAIRequestPanel() {
       {/* Tab Headers */}
       <div className="flex items-center gap-2">
         <div role="tablist" className="inline-flex gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              role="tab"
-              onClick={() => handleTabChange(tab.id)}
-              className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
-                bodyType === tab.id
-                  ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
-                  : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                onClick={() => handleTabChange(tab.id)}
+                className={`inline-flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
+                  bodyType === tab.id
+                    ? 'bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 shadow-sm'
+                    : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
         {bodyType === 'audio' && (
           <select
@@ -115,9 +120,7 @@ export function OpenAIRequestPanel() {
             {transcriptionFile ? (
               <div className="flex items-center gap-2 px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg">
                     <div className="flex-1 text-neutral-700 dark:text-neutral-300">
-                      <svg className="w-4 h-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                      </svg>
+                      <FileAudio className="w-4 h-4 inline-block mr-2" />
                       Audio file uploaded
                     </div>
                     <button

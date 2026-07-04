@@ -73,9 +73,11 @@ function AppContent() {
         </div>
       </div>
 
-      {/* Chat Panel - Inline */}
+      {/* Chat Panel - key forces remount on protocol/request change so useChat
+          rebuilds with the right tools/connection (the library doesn't update them). */}
       {aiPanelOpen && getConfig().ai?.model && (
         <ChatPanel
+          key={`${request.protocol}:${request.id}`}
           isOpen={aiPanelOpen}
           onClose={toggleAiPanel}
           request={request}

@@ -57,7 +57,7 @@ export function McpRequestBar() {
           type="button"
           onClick={handleOpenFeatureMenu}
           disabled={!url}
-          className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded"
+          className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded max-w-[42vw]"
         >
           {selectedTool ? (
             <Wrench className="w-4 h-4 text-amber-500 shrink-0" />
@@ -66,7 +66,7 @@ export function McpRequestBar() {
           ) : (
             <Wrench className="w-4 h-4 text-neutral-400 shrink-0" />
           )}
-          <span className={`text-sm whitespace-nowrap ${selectedTool || selectedResource ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
+          <span className={`text-sm whitespace-nowrap truncate ${selectedTool || selectedResource ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
             {featureLabel}
           </span>
           <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 shrink-0 transition-transform ${featureMenuOpen ? 'rotate-180' : ''}`} />

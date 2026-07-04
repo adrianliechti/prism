@@ -1,5 +1,5 @@
 import { useClient } from '../context/useClient';
-import { useRequestBarPortal } from '../context/RequestBarPortal';
+import { useRequestBarPortal } from '../context/requestBarPortalContext';
 import { ProtocolSwitcher } from './ProtocolSwitcher';
 import { SharedRequestActions } from './SharedRequestActions';
 import { HttpRequestBar, HttpRequestPanel } from './http';
@@ -7,7 +7,7 @@ import { GrpcRequestBar, GrpcRequestPanel } from './grpc';
 import { McpRequestBar, McpRequestPanel } from './mcp';
 import { OpenAIRequestBar, OpenAIRequestPanel } from './openai';
 import { ResponseViewer } from './ResponseViewer';
-import { PanelRightClose } from 'lucide-react';
+import { PanelRightClose, Plus } from 'lucide-react';
 
 export function RequestPanel() {
   const { request, newRequest, sidebarCollapsed, toggleSidebar, history } = useClient();
@@ -56,9 +56,7 @@ export function RequestPanel() {
           className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
           title="New request"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
+          <Plus className="w-4 h-4" />
         </button>
       </div>
 

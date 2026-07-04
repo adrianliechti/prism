@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import type { FormDataField } from '../../types/types';
 import { Trash2, Circle, CheckCircle2, Paperclip, X } from 'lucide-react';
 
@@ -24,6 +24,14 @@ export function FormDataEditor({
   valuePlaceholder = 'Value',
 }: FormDataEditorProps) {
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // New rows only appear when the last row gains content, so an empty list
+  // (e.g. set by an AI tool) would leave the editor without any input row.
+  useEffect(() => {
+    if (items.length === 0) {
+      onChange([createEmptyField()]);
+    }
+  }, [items, onChange]);
 
   const updateItem = (id: string, updates: Partial<FormDataField>) => {
     const newItems = items.map((item) =>
@@ -120,7 +128,7 @@ export function FormDataEditor({
                   <input
                     type="text"
                     value={item.value}
-                    onChange={(e) => updateItem(item.id, { value: e.target.value })}
+                    onChange={(e) => updateItem(item.id, { value: e.target.value, type: 'text' })}
                     placeholder={valuePlaceholder}
                     className="w-full px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded text-xs text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-white/20 transition-colors"
                   />

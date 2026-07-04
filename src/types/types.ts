@@ -9,11 +9,15 @@ export interface McpFeature {
   name: string;
   description?: string;
   schema?: Record<string, unknown>;
+  uri?: string;
+  mimeType?: string;
 }
 
 export interface McpListFeaturesResponse {
   tools: McpFeature[];
   resources: McpFeature[];
+  /** per-section listing failures reported by the backend */
+  errors?: string[];
   error?: string;
 }
 
@@ -118,6 +122,8 @@ export interface HttpResponse {
   statusCode: number;
   headers: Record<string, string>;
   body: Blob;
+  /** true when the body was too large to persist and is empty after reload */
+  bodyOmitted?: boolean;
   duration: number;
   error?: string;
 }
@@ -128,6 +134,7 @@ export interface HttpRequestData {
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;
+  options: HttpRequest['options'];
   request: HttpRequest | null;
   response: HttpResponse | null;
 }
@@ -220,6 +227,7 @@ export interface OpenAIEmbeddingsInput {
 
 export interface OpenAIRequestData {
   model: string;
+  apiKey?: string; // API key for authentication
   chat?: {
     input: OpenAIChatInput[];
   };

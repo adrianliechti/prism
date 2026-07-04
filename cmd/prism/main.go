@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/adrianliechti/prism/pkg/config"
 	"github.com/adrianliechti/prism/pkg/server"
@@ -25,7 +27,8 @@ func main() {
 		panic(err)
 	}
 
-	serverPort, err := getFreePort("localhost", *portFlag)
+	// Bind the port now and hand the listener to the server to avoid a TOCTOU race.
+	listener, err := listen("localhost", *portFlag)
 
 	if err != nil {
 		panic(err)
@@ -37,39 +40,36 @@ func main() {
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", serverPort)
-	addr := fmt.Sprintf("localhost:%d", serverPort)
+	addr := listener.Addr().(*net.TCPAddr)
+	url := fmt.Sprintf("http://localhost:%d", addr.Port)
 
 	if !*serverFlag {
 		openBrowser(url)
 	}
 	fmt.Printf("Prism is running at %s\n", url)
 
-	if err := srv.ListenAndServe(context.Background(), addr); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := srv.Serve(ctx, listener); err != nil {
 		panic(err)
 	}
 }
 
-func getFreePort(host string, port int) (int, error) {
+// listen binds to the requested port, falling back to a random free port if busy.
+func listen(host string, port int) (net.Listener, error) {
 	if port > 0 {
-		listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
-
+		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 		if err == nil {
-			listener.Close()
-			return port, nil
+			return l, nil
 		}
 	}
 
-	listener, err := net.Listen("tcp", ":0")
-
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:0", host))
 	if err != nil {
-		return 0, fmt.Errorf("failed to find a free port: %w", err)
+		return nil, fmt.Errorf("failed to bind a free port: %w", err)
 	}
-
-	defer listener.Close()
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
+	return l, nil
 }
 
 func openBrowser(url string) error {
@@ -89,3 +89,4 @@ func openBrowser(url string) error {
 
 	return errors.ErrUnsupported
 }
+

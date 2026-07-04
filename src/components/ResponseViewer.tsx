@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useClient } from '../context/useClient';
-import { AlertCircle, SendHorizontal, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertCircle, SendHorizontal, Clock, CheckCircle2, XCircle, X } from 'lucide-react';
 import { HttpResponseViewer } from './http';
 import { GrpcResponseViewer } from './grpc';
 import { McpResponseViewer } from './mcp';
@@ -37,7 +37,7 @@ function StatusBadge({ statusCode, status }: { statusCode: number; status: strin
 }
 
 export function ResponseViewer() {
-  const { request, isExecuting } = useClient();
+  const { request, isExecuting, clearResponse } = useClient();
   const [viewMode, setViewMode] = useState<'pretty' | 'raw'>('pretty');
   const [showHeaders, setShowHeaders] = useState(false);
 
@@ -53,11 +53,12 @@ export function ResponseViewer() {
   const openaiError = request?.openai?.response?.error;
 
   const response = httpResponse ?? (grpcResponse ? {
-    status: grpcResponse.error || 'OK',
+    status: grpcResponse.error ? 'Error' : 'OK',
     statusCode: grpcResponse.error ? 0 : 200,
     headers: grpcResponse.metadata ?? {},
     body: new Blob([grpcResponse.body], { type: 'application/json' }),
     duration: grpcResponse.duration,
+    error: grpcResponse.error,
   } : undefined);
 
   const error = response?.error ?? mcpError ?? openaiError;
@@ -79,12 +80,20 @@ export function ResponseViewer() {
   if (error) {
     return (
       <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-rose-500 dark:text-rose-400" />
-          <div>
+          <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-rose-500 dark:text-rose-400">Error</h3>
             <p className="text-sm text-neutral-600 dark:text-neutral-300 mt-1">{error}</p>
           </div>
+          <button
+            type="button"
+            onClick={clearResponse}
+            className="p-1 text-rose-500/70 dark:text-rose-400/70 hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 rounded transition-colors"
+            title="Clear response"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
     );
@@ -92,10 +101,15 @@ export function ResponseViewer() {
 
   // Empty state - no response yet
   if (!response && !mcpResponse && !openaiResponse) {
+    const emptyHint =
+      protocol === 'mcp' ? 'Pick a tool or resource, then Send to invoke it.'
+      : protocol === 'openai' ? 'Choose a model and input, then Send to call the API.'
+      : protocol === 'grpc' ? 'Select a service and method, then Send to make a call.'
+      : 'Enter a URL and press Send to make a request.';
     return (
       <div className="h-full flex flex-col items-center justify-center">
         <SendHorizontal className="w-12 h-12 text-neutral-300 dark:text-neutral-600 mb-4" />
-        <p className="text-sm text-neutral-400 dark:text-neutral-500">Hit Send to see what happens</p>
+        <p className="text-sm text-neutral-400 dark:text-neutral-500">{emptyHint}</p>
       </div>
     );
   }
@@ -112,10 +126,11 @@ export function ResponseViewer() {
         if (mcpResponse?.result) {
           // Determine if it's a tool or resource response based on response shape
           const isToolResponse = 'content' in mcpResponse.result;
+          const isResourceResponse = !isToolResponse && 'contents' in mcpResponse.result;
           return (
-            <McpResponseViewer 
-              toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined} 
-              resourceResponse={!isToolResponse ? mcpResponse.result as McpReadResourceResponse : undefined}
+            <McpResponseViewer
+              toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined}
+              resourceResponse={isResourceResponse ? mcpResponse.result as McpReadResourceResponse : undefined}
               viewMode={viewMode}
             />
           );
@@ -134,8 +149,15 @@ export function ResponseViewer() {
       case 'rest':
       default:
         if (response) {
+          if (response.bodyOmitted && response.body.size === 0) {
+            return (
+              <div className="h-full flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
+                Response body was too large to keep in history. Re-send the request to view it.
+              </div>
+            );
+          }
           return (
-            <HttpResponseViewer 
+            <HttpResponseViewer
               response={response}
               viewMode={viewMode}
             />
@@ -233,6 +255,14 @@ export function ResponseViewer() {
               {protocol === 'grpc' ? 'Metadata' : 'Headers'} ({Object.keys(response.headers).length})
             </button>
           )}
+          <button
+            type="button"
+            onClick={clearResponse}
+            className="p-0.5 text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/10 rounded transition-colors"
+            title="Clear response"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

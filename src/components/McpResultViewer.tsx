@@ -353,7 +353,8 @@ export function McpResultViewer({ toolResponse, resourceResponse }: McpResultVie
   }
 
   if (resourceResponse) {
-    const contentCount = resourceResponse.contents.length;
+    const contents = resourceResponse.contents ?? [];
+    const contentCount = contents.length;
     
     return (
       <div className="space-y-2">
@@ -364,7 +365,7 @@ export function McpResultViewer({ toolResponse, resourceResponse }: McpResultVie
             </span>
           </div>
         )}
-        {resourceResponse.contents.map((content, index) => (
+        {contents.map((content, index) => (
           <ResourceContentCard key={index} content={content} index={index} />
         ))}
         {contentCount === 0 && (

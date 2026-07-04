@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useClient } from '../../context/useClient';
-import { ChevronDown, Cpu, RefreshCw } from 'lucide-react';
+import { buildOpenAIProxyPath } from '../../lib/proxy';
+import { ChevronDown, Cpu, RefreshCw, Key } from 'lucide-react';
 
 export function OpenAIRequestBar() {
-  const { request, setUrl, setOpenAIModel } = useClient();
+  const { request, setUrl, setOpenAIModel, setOpenAIApiKey } = useClient();
 
   const url = request?.url ?? '';
   const model = request?.openai?.model ?? '';
+  const apiKey = request?.openai?.apiKey ?? '';
 
   const [models, setModels] = useState<string[]>([]);
 
@@ -36,10 +38,28 @@ export function OpenAIRequestBar() {
     try {
       // Normalize URL - remove trailing slash
       const baseUrl = url.replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/v1/models`);
-      
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'models');
+      if (!proxyUrl) {
+        throw new Error('Invalid OpenAI API URL');
+      }
+      const headersObj: Record<string, string> = {};
+      // Add API key as Authorization header if present
+      if (apiKey) {
+        headersObj['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      const response = await fetch(proxyUrl, {
+        headers: headersObj,
+      });
+
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Authentication required — enter an API key below.');
+        }
+        if (response.status === 404) {
+          throw new Error('Models endpoint not found at this URL.');
+        }
+        throw new Error(`Failed to fetch models (HTTP ${response.status}).`);
       }
 
       const data = await response.json();
@@ -58,7 +78,7 @@ export function OpenAIRequestBar() {
     } finally {
       setLoading(false);
     }
-  }, [url, model, setOpenAIModel]);
+  }, [url, model, setOpenAIModel, apiKey]);
 
   // Fetch models when URL changes (debounced)
   useEffect(() => {
@@ -69,7 +89,7 @@ export function OpenAIRequestBar() {
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [url, apiKey, fetchModels]);
 
   const handleOpenModelMenu = () => {
     setModelMenuOpen(true);
@@ -102,10 +122,10 @@ export function OpenAIRequestBar() {
           type="button"
           onClick={handleOpenModelMenu}
           disabled={!url}
-          className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded"
+          className="h-8 px-2 flex items-center gap-2 text-sm transition hover:bg-neutral-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed rounded max-w-[42vw]"
         >
           <Cpu className={`w-4 h-4 shrink-0 ${model ? 'text-violet-500' : 'text-neutral-400'}`} />
-          <span className={`text-sm whitespace-nowrap ${model ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
+          <span className={`text-sm whitespace-nowrap truncate ${model ? 'text-neutral-800 dark:text-neutral-100' : 'text-neutral-400 dark:text-neutral-500'}`}>
             {model || 'Select model'}
           </span>
           {loading ? (
@@ -116,7 +136,7 @@ export function OpenAIRequestBar() {
         </button>
 
         {modelMenuOpen && (
-          <div className="absolute left-0 z-50 mt-2 w-64 max-h-80 bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute left-0 z-50 mt-2 w-72 max-h-96 bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
             <div className="p-2 border-b border-neutral-200 dark:border-white/10 flex items-center justify-between">
               <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
                 Models ({models.length})
@@ -160,6 +180,29 @@ export function OpenAIRequestBar() {
                   </button>
                 ))
               )}
+            </div>
+
+            <div className="p-2 border-t border-neutral-200 dark:border-white/10">
+              <div className="flex items-center gap-2">
+                <Key className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setOpenAIApiKey(e.target.value)}
+                  placeholder="API key for this request"
+                  className="flex-1 min-w-0 px-2 py-1 text-xs bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded focus:outline-none focus:ring-1 focus:ring-violet-500/50 text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500"
+                />
+                {apiKey && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenAIApiKey('')}
+                    className="px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/10 rounded transition-colors"
+                    title="Clear API key"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

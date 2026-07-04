@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useClient } from '../../context/useClient';
 import { Trash2, FileText, Upload, X } from 'lucide-react';
 import type { OpenAIChatInput, OpenAIChatContent } from '../../types/types';
@@ -26,11 +26,19 @@ function isMessageEmpty(message: OpenAIChatInput): boolean {
   }
 }
 
+const EMPTY_CHAT_INPUT: OpenAIChatInput[] = [];
+
 export function OpenAIChatEditor() {
   const { request, setOpenAIChatInput } = useClient();
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   
-  const chatInput = request?.openai?.chat?.input ?? [];
+  const chatInput = request?.openai?.chat?.input ?? EMPTY_CHAT_INPUT;
+
+  useEffect(() => {
+    if (chatInput.length === 0) {
+      setOpenAIChatInput([createEmptyMessage()]);
+    }
+  }, [chatInput, setOpenAIChatInput]);
 
   const updateMessage = (id: string, updates: Partial<OpenAIChatInput>) => {
     const newInput = chatInput.map((msg) =>
@@ -66,12 +74,13 @@ export function OpenAIChatEditor() {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1];
-      
+
+      // Always keep the full data URL: the Responses API's file_data field
+      // expects data:<mime>;base64,... — bare base64 gets rejected.
       if (file.type.startsWith('image/')) {
         updateContent(id, { type: 'file', data: dataUrl });
       } else {
-        updateContent(id, { type: 'file', name: file.name, data: base64 });
+        updateContent(id, { type: 'file', name: file.name, data: dataUrl });
       }
     };
     reader.readAsDataURL(file);

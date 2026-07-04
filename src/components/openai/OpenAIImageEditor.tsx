@@ -21,6 +21,7 @@ export function OpenAIImageEditor() {
   const { request, setOpenAIImageFiles } = useClient();
   
   const images = request?.openai?.image?.images ?? [];
+  const displayedImages = images.length > 0 ? images : [{ id: 'new-image', data: '' }];
 
   const handleFileSelect = (id: string, file: File | null) => {
     if (!file) return;
@@ -28,7 +29,7 @@ export function OpenAIImageEditor() {
     const reader = new FileReader();
     reader.onloadend = () => {
       const dataUrl = reader.result as string;
-      const newImages = images.map((item) =>
+      const newImages = displayedImages.map((item) =>
         item.id === id ? { ...item, data: dataUrl } : item
       );
       
@@ -44,15 +45,15 @@ export function OpenAIImageEditor() {
   };
 
   const removeImage = (id: string) => {
-    if (images.length === 1) {
+    if (displayedImages.length === 1) {
       setOpenAIImageFiles([createEmptyImage()]);
       return;
     }
-    setOpenAIImageFiles(images.filter((item) => item.id !== id));
+    setOpenAIImageFiles(displayedImages.filter((item) => item.id !== id));
   };
 
   const clearImage = (id: string) => {
-    const newImages = images.map((item) =>
+    const newImages = displayedImages.map((item) =>
       item.id === id ? { ...item, data: '' } : item
     );
     setOpenAIImageFiles(newImages);
@@ -62,7 +63,7 @@ export function OpenAIImageEditor() {
     <div>
       <table className="w-full">
         <tbody>
-          {images.map((item) => (
+          {displayedImages.map((item) => (
             <tr key={item.id} className="border-b border-neutral-100 dark:border-white/5 last:border-0">
               {/* File input */}
               <td className="px-1.5 py-1.5">

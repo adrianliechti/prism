@@ -116,7 +116,8 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
   // Popover state
   const [activePopover, setActivePopover] = useState<{
     variableKey: string;
-    rect: DOMRect;
+    top: number;
+    left: number;
   } | null>(null);
   const [popoverInput, setPopoverInput] = useState('');
   
@@ -185,9 +186,14 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
     };
   }, [xmlValidity.valid, xmlValidity.empty, value, onChange]);
 
-  // Initial build and rebuild when switching back from raw mode
+  // Initial build and rebuild when switching back from raw mode. Guard on
+  // the showRaw transition — buildDOM's identity changes every keystroke, and
+  // rebuilding per keypress resets the DOM under the caret and breaks IME.
+  const prevShowRawRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (!showRaw) {
+    const prev = prevShowRawRef.current;
+    prevShowRawRef.current = showRaw;
+    if (!showRaw && (prev === null || prev === true)) {
       buildDOM();
     }
   }, [showRaw, buildDOM]);
@@ -234,10 +240,15 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
         e.stopPropagation();
       } else if (type === 'base64') {
         const rect = chip.getBoundingClientRect();
+        const containerRect = containerRef.current?.getBoundingClientRect();
         const variable = variables.find(v => v.id === variableId);
         
         setPopoverInput(variable?.data || '');
-        setActivePopover({ variableKey: `${type}:${variableId}`, rect });
+        setActivePopover({
+          variableKey: `${type}:${variableId}`,
+          top: containerRect ? rect.bottom - containerRect.top + 4 : 0,
+          left: containerRect ? Math.max(0, rect.left - containerRect.left) : 0,
+        });
         e.preventDefault();
         e.stopPropagation();
       }
@@ -299,21 +310,11 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
     };
   }, [setShowTypeMenu]);
 
-  // Calculate popover position
-  const popoverPosition = useMemo(() => {
-    if (!activePopover || !containerRef.current) return { top: 0, left: 0 };
-    const containerRect = containerRef.current.getBoundingClientRect();
-    return {
-      top: activePopover.rect.bottom - containerRect.top + 4,
-      left: Math.max(0, activePopover.rect.left - containerRect.left),
-    };
-  }, [activePopover]);
-
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-50 max-h-[60vh] relative overflow-hidden">
       {/* Editor or Raw View */}
       {showRaw ? (
-        <pre className="flex-1 min-h-0 p-3 font-mono text-sm text-zinc-100 overflow-y-auto whitespace-pre-wrap wrap-break-word">
+        <pre className="flex-1 min-h-0 p-3 font-mono text-sm text-neutral-800 dark:text-zinc-100 overflow-y-auto whitespace-pre-wrap wrap-break-word">
           {resolvedXml}
         </pre>
       ) : (
@@ -326,10 +327,10 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
             onClick={handleClick}
-            className="h-full p-3 font-mono text-sm text-zinc-100 outline-none overflow-y-auto whitespace-pre-wrap wrap-break-word"
+            className="h-full p-3 font-mono text-sm text-neutral-800 dark:text-zinc-100 outline-none overflow-y-auto whitespace-pre-wrap wrap-break-word"
           />
           {!value && placeholder && (
-            <div className="absolute top-3 left-3 font-mono text-sm text-zinc-500 pointer-events-none whitespace-pre-wrap">
+            <div className="absolute top-3 left-3 font-mono text-sm text-neutral-400 dark:text-zinc-500 pointer-events-none whitespace-pre-wrap">
               {placeholder}
             </div>
           )}
@@ -340,15 +341,15 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
       <div className="flex items-center justify-end gap-2 px-3 py-1.5 text-xs shrink-0">
         <button
           onClick={() => setShowRaw(!showRaw)}
-          className={`transition-colors flex items-center gap-1 ${showRaw ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-500 hover:text-zinc-300'}`}
+          className={`transition-colors flex items-center gap-1 ${showRaw ? 'text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300' : 'text-neutral-500 hover:text-neutral-700 dark:text-zinc-500 dark:hover:text-zinc-300'}`}
           title={showRaw ? "Show editor" : "Show resolved XML"}
         >
           <Eye className="w-3.5 h-3.5" />
         </button>
         {xmlValidity.valid ? (
-          <span className="text-emerald-500">Valid XML</span>
+          <span className="text-emerald-600 dark:text-emerald-500">Valid XML</span>
         ) : (
-          <span className="text-red-400" title={xmlValidity.error}>Invalid XML</span>
+          <span className="text-red-600 dark:text-red-400" title={xmlValidity.error}>Invalid XML</span>
         )}
       </div>
       
@@ -372,7 +373,7 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
         const [type] = activePopover.variableKey.split(':') as [VariableType, string];
         
         return (
-          <div className="absolute z-50 bg-zinc-800/95 border border-zinc-700/50 rounded shadow-lg p-1.5 w-44" style={popoverPosition}>
+          <div className="absolute z-50 bg-zinc-800/95 border border-zinc-700/50 rounded shadow-lg p-1.5 w-44" style={{ top: activePopover.top, left: activePopover.left }}>
             {type === 'base64' ? (
               <div className="flex gap-1">
                 <input 
