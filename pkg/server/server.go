@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adrianliechti/prism"
@@ -18,13 +19,40 @@ import (
 
 type Server struct {
 	http.Handler
+
+	// remembers which MCP transport (streamable vs. sse) worked per server URL
+	mcpTransports sync.Map
+}
+
+// requireLocalHost rejects requests whose Host is not a loopback name. The
+// server binds localhost only, but without this check a DNS-rebinding page
+// (attacker domain resolving to 127.0.0.1) could read stored requests and
+// spend the server-side OpenAI key.
+func requireLocalHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostname := r.Host
+		if h, _, err := net.SplitHostPort(r.Host); err == nil {
+			hostname = h
+		}
+		hostname = strings.Trim(hostname, "[]")
+
+		if hostname != "localhost" {
+			ip := net.ParseIP(hostname)
+			if ip == nil || !ip.IsLoopback() {
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func New(cfg *config.Config) (*Server, error) {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		Handler: mux,
+		Handler: requireLocalHost(mux),
 	}
 
 	mux.HandleFunc("/proxy/grpc/{scheme}/{host}/{path...}", s.handleGRPC)
@@ -81,14 +109,6 @@ func New(cfg *config.Config) (*Server, error) {
 	mux.Handle("/", http.FileServerFS(prism.DistFS))
 
 	return s, nil
-}
-
-func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	return s.Serve(ctx, listener)
 }
 
 // Serve runs until ctx is cancelled, then shuts down gracefully with a timeout.

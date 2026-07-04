@@ -113,7 +113,7 @@ func (s *Server) handleDataPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

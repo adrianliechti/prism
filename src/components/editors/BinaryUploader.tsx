@@ -43,6 +43,11 @@ export function BinaryUploader({ file, fileName, onFileChange }: BinaryUploaderP
       {!file ? (
         <div
           onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            handleFileSelect(e.dataTransfer.files?.[0] ?? null);
+          }}
           className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-neutral-300 dark:border-white/20 rounded-lg cursor-pointer hover:border-neutral-400 dark:hover:border-white/30 hover:bg-neutral-50 dark:hover:bg-white/5 transition-colors"
         >
           <Upload className="w-8 h-8 text-neutral-400 dark:text-neutral-500 mb-2" />

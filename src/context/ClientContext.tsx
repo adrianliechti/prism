@@ -14,6 +14,7 @@ import {
   type McpCallToolResponse,
   type McpReadResourceResponse,
 } from '../lib/data';
+import { buildOpenAIProxyPath, buildMcpProxyPath } from '../lib/proxy';
 import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIRequestData, OpenAIImageFile } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 import { kvToRecord } from '../utils/format';
@@ -25,29 +26,15 @@ function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
 }
 
-// Header names fetch() refuses to send directly; they are smuggled to the
-// proxy as X-Prism-Header-<name> and unwrapped there.
-const FORBIDDEN_FETCH_HEADERS = new Set([
-  'accept-charset', 'accept-encoding', 'access-control-request-headers',
-  'access-control-request-method', 'connection', 'content-length', 'cookie',
-  'cookie2', 'date', 'dnt', 'expect', 'host', 'keep-alive', 'origin',
-  'referer', 'set-cookie', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'via',
+// Response headers injected by the Go proxy for its own functioning; hidden
+// from the displayed response (upstream originals arrive as X-Prism-Upstream-*).
+const PROXY_INJECTED_HEADERS = new Set([
+  'access-control-allow-origin',
+  'access-control-allow-methods',
+  'access-control-allow-headers',
+  'access-control-expose-headers',
+  'x-prism-status',
 ]);
-
-function isForbiddenFetchHeader(name: string): boolean {
-  const lower = name.toLowerCase();
-  return FORBIDDEN_FETCH_HEADERS.has(lower) || lower.startsWith('proxy-') || lower.startsWith('sec-');
-}
-
-// Status texts for 3xx codes the proxy masks behind X-Prism-Status when
-// redirect following is off.
-const REDIRECT_STATUS_TEXT: Record<number, string> = {
-  301: 'Moved Permanently',
-  302: 'Found',
-  303: 'See Other',
-  307: 'Temporary Redirect',
-  308: 'Permanent Redirect',
-};
 
 function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
   const base: Request = {
@@ -126,33 +113,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: { ...prev.request, ...updates },
     }));
-  }, []);
-
-  const buildMcpProxyPath = useCallback((serverUrl: string, suffix: string) => {
-    try {
-      const url = new URL(serverUrl);
-      const scheme = url.protocol.replace(/:$/, '');
-      const cleanSuffix = suffix.replace(/^\//, '');
-      // Pass the full server URL (path and query included) via ?server=
-      return `/proxy/mcp/${scheme}/${url.host}/${cleanSuffix}?server=${encodeURIComponent(serverUrl)}`;
-    } catch {
-      return '';
-    }
-  }, []);
-
-  const buildOpenAIProxyPath = useCallback((baseUrl: string, endpoint: string) => {
-    try {
-      const url = new URL(baseUrl);
-      const scheme = url.protocol.replace(/:$/, '');
-      // Keep any base path prefix (gateways like openrouter.ai/api need it);
-      // endpoints already include /v1, so strip a trailing /v1 from the base.
-      let basePath = url.pathname.replace(/\/+$/, '');
-      if (basePath.endsWith('/v1')) basePath = basePath.slice(0, -3);
-      const cleanEndpoint = endpoint.replace(/^\//, '');
-      return `/proxy/${scheme}/${url.host}${basePath}/${cleanEndpoint}`;
-    } catch {
-      return '';
-    }
   }, []);
 
   // Request actions
@@ -281,10 +241,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: {
         ...prev.request,
-        mcp: { 
+        mcp: {
           headers: prev.request.mcp?.headers ?? [createEmptyKeyValue()],
-          tool, 
-          resource: undefined 
+          // editing arguments must not wipe the schema or the last response
+          tool: tool && !tool.schema && prev.request.mcp?.tool?.name === tool.name
+            ? { ...tool, schema: prev.request.mcp.tool.schema }
+            : tool,
+          resource: undefined,
+          response: prev.request.mcp?.response,
         },
       },
     }));
@@ -468,13 +432,16 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const response = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ headers: kvToRecord(req.mcp?.headers ?? []) }),
+        body: JSON.stringify({ headers: kvToRecord(req.mcp?.headers ?? [], v => resolveVariables(v, req.variables)) }),
       });
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `HTTP ${response.status}`);
       }
       const features: McpListFeaturesResponse = await response.json();
+      if (features.errors?.length && !features.error) {
+        features.error = features.errors.join('; ');
+      }
       setState(prev => ({ ...prev, isExecuting: false }));
       return features;
     } catch (err) {
@@ -482,7 +449,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, isExecuting: false }));
       return { tools: [], resources: [], error: errorMessage };
     }
-  }, [state.request, buildMcpProxyPath]);
+  }, [state.request]);
 
   const clearResponse = useCallback(() => {
     setState(prev => {
@@ -572,11 +539,13 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     const grpcBody = req.grpc?.body ?? '{}';
     const body = resolveVariables(grpcBody, req.variables);
+    // Metadata is smuggled as X-Prism-Header-* so browser-generated headers
+    // never leak into gRPC metadata and no key gets silently dropped.
     const headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
     for (const kv of (req.grpc?.metadata ?? []).filter(kv => kv.enabled && kv.key)) {
-      const key = resolveVariables(kv.key, req.variables);
-      if (key.toLowerCase() === 'content-type') continue; // never valid gRPC metadata
-      headersObj[key] = resolveVariables(kv.value, req.variables);
+      const key = resolveVariables(kv.key, req.variables).toLowerCase();
+      if (key === 'content-type') continue; // reserved by the gRPC protocol itself
+      headersObj[`x-prism-header-${key}`] = resolveVariables(kv.value, req.variables);
     }
     const proxyUrl = `/proxy/grpc/${grpcScheme}/${grpcHost}/${grpcService}/${grpcMethod}`;
 
@@ -611,10 +580,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     if (!serverUrl) throw new Error('MCP server URL is required');
 
     const startTime = performance.now();
-    const mcpHeaders: Record<string, string> = {};
-    for (const kv of (req.mcp?.headers ?? []).filter(kv => kv.enabled && kv.key)) {
-      mcpHeaders[resolveVariables(kv.key, req.variables)] = resolveVariables(kv.value, req.variables);
-    }
+    const mcpHeaders = kvToRecord(req.mcp?.headers ?? [], v => resolveVariables(v, req.variables));
     let mcpResult: McpCallToolResponse | McpReadResourceResponse | undefined;
 
     if (req.mcp?.tool) {
@@ -699,7 +665,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }),
       }));
 
-      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/responses');
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'responses');
       const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
 
@@ -734,14 +700,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             formData.append('image[]', new Blob([array], { type: dataUrlMatch[1] }), 'image.png');
           }
         }
-        const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/edits');
+        const proxyUrl = buildOpenAIProxyPath(baseUrl, 'images/edits');
         const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
         if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
         const data = await response.json();
         const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
         openaiResponse = { result: { type: 'image', image: img?.b64_json || img?.url || '' }, duration: Math.round(performance.now() - startTime) };
       } else {
-        const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/images/generations');
+        const proxyUrl = buildOpenAIProxyPath(baseUrl, 'images/generations');
         const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, prompt, response_format: 'b64_json' }) });
         if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
         const data = await response.json();
@@ -753,7 +719,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const voice = req.openai.audio.voice ?? 'alloy';
       if (!text) throw new Error('Please enter text to convert to speech');
 
-      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/speech');
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'audio/speech');
       const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: text, voice }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
 
@@ -780,7 +746,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       formData.append('file', new Blob([audioArray], { type: mimeType }), `audio.${extension}`);
       formData.append('model', model);
 
-      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/audio/transcriptions');
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'audio/transcriptions');
       const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
@@ -789,7 +755,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       const texts = (req.openai.embeddings.input ?? []).filter(item => item.text.trim()).map(item => item.text);
       if (texts.length === 0) throw new Error('Please enter at least one text to convert to embeddings');
 
-      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/embeddings');
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'embeddings');
       const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: texts }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
@@ -910,17 +876,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       query: Object.fromEntries(queryParams), body: bodyForHistory, options,
     };
 
-    // Assemble fetch headers; names the browser refuses on fetch() are
-    // smuggled as X-Prism-Header-* and unwrapped by the proxy.
+    // Every user header is smuggled as X-Prism-Header-* and unwrapped by the
+    // proxy: the browser can neither drop them (fetch's forbidden-header
+    // list) nor mix them up with its own automatic headers.
     const fetchHeaders = new Headers();
     for (const [key, value] of headerPairs) {
       if (useFormData && key.toLowerCase() === 'content-type') continue; // browser sets the multipart boundary
       try {
-        if (isForbiddenFetchHeader(key)) {
-          fetchHeaders.append(`x-prism-header-${key}`, value);
-        } else {
-          fetchHeaders.append(key, value);
-        }
+        fetchHeaders.append(`x-prism-header-${key}`, value);
       } catch (err) {
         throw new Error(`Invalid header "${key}"`, { cause: err });
       }
@@ -936,15 +899,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const responseBody = await response.blob();
     const duration = Math.round(performance.now() - startTime);
 
-    // The proxy masks 3xx behind X-Prism-Status when redirect following is
-    // off, so the browser fetch doesn't chase Location itself.
-    const maskedStatus = Number(response.headers.get('x-prism-status')) || 0;
-    const statusCode = maskedStatus || response.status;
-    const statusText = maskedStatus ? REDIRECT_STATUS_TEXT[maskedStatus] ?? '' : response.statusText;
+    // The proxy masks 3xx behind X-Prism-Status ("302 Found") when redirect
+    // following is off, so the browser fetch doesn't chase Location itself.
+    let statusCode = response.status;
+    let statusText = response.statusText;
+    const masked = response.headers.get('x-prism-status');
+    if (masked) {
+      const space = masked.indexOf(' ');
+      const code = Number(space === -1 ? masked : masked.slice(0, space));
+      if (code) {
+        statusCode = code;
+        statusText = space === -1 ? '' : masked.slice(space + 1);
+      }
+    }
 
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => {
-      if (key.toLowerCase() === 'x-prism-status') return;
+      const lower = key.toLowerCase();
+      if (PROXY_INJECTED_HEADERS.has(lower)) return;
+      if (lower.startsWith('x-prism-upstream-')) {
+        responseHeaders[lower.slice('x-prism-upstream-'.length)] = value;
+        return;
+      }
       responseHeaders[key] = value;
     });
 
@@ -963,29 +939,46 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const req = state.request;
     setState(prev => ({ ...prev, isExecuting: true }));
 
+    let updatedRequest: Request;
     try {
-      let updatedRequest: Request;
       switch (req.protocol) {
         case 'grpc': updatedRequest = await executeGrpc(req); break;
         case 'mcp': updatedRequest = await executeMcp(req); break;
         case 'openai': updatedRequest = await executeOpenAI(req); break;
         default: updatedRequest = await executeRest(req); break;
       }
-      setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      try {
-        saveToHistory(updatedRequest);
-      } catch (saveErr) {
-        console.error('Failed to save request to history:', saveErr);
-      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      const updatedRequest = buildErrorRequest(req, errorMessage);
-      setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
-      try {
-        saveToHistory(updatedRequest);
-      } catch (saveErr) {
-        console.error('Failed to save request to history:', saveErr);
+      updatedRequest = buildErrorRequest(req, errorMessage);
+    }
+
+    // Merge only the response back so edits made while the request was in
+    // flight (user typing, AI-tool changes) aren't clobbered by the snapshot
+    // the execution ran against.
+    setState(prev => {
+      if (prev.request.id !== req.id || prev.request.protocol !== req.protocol) {
+        return { ...prev, isExecuting: false };
       }
+      const merged: Request = { ...prev.request, executionTime: updatedRequest.executionTime };
+      if (updatedRequest.http) {
+        merged.http = { ...(prev.request.http ?? updatedRequest.http), request: updatedRequest.http.request, response: updatedRequest.http.response };
+      }
+      if (updatedRequest.grpc) {
+        merged.grpc = { ...(prev.request.grpc ?? updatedRequest.grpc), response: updatedRequest.grpc.response };
+      }
+      if (updatedRequest.mcp) {
+        merged.mcp = { ...(prev.request.mcp ?? updatedRequest.mcp), response: updatedRequest.mcp.response };
+      }
+      if (updatedRequest.openai) {
+        merged.openai = { ...(prev.request.openai ?? updatedRequest.openai), response: updatedRequest.openai.response };
+      }
+      return { ...prev, request: merged, isExecuting: false };
+    });
+
+    try {
+      saveToHistory(updatedRequest);
+    } catch (saveErr) {
+      console.error('Failed to save request to history:', saveErr);
     }
   };
 
@@ -995,6 +988,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     // Preserve original IDs so everything matches
     newReq.id = entry.id;
     newReq.url = entry.url;
+    newReq.creationTime = entry.creationTime ?? newReq.creationTime;
     newReq.executionTime = entry.executionTime;
     newReq.variables = entry.variables ?? [];
     

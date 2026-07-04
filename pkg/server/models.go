@@ -37,6 +37,7 @@ type McpFeature struct {
 type McpListFeaturesResponse struct {
 	Tools     []McpFeature `json:"tools"`
 	Resources []McpFeature `json:"resources"`
+	Errors    []string     `json:"errors,omitempty"`
 }
 
 type McpListFeaturesRequest struct {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { decodeBlobText } from '../../utils/format';
 
 interface TextViewerProps {
   content: Blob;
@@ -8,7 +9,7 @@ export function TextViewer({ content }: TextViewerProps) {
   const [text, setText] = useState<string>('');
 
   useEffect(() => {
-    content.text().then(setText);
+    decodeBlobText(content).then(setText);
   }, [content]);
 
   return (

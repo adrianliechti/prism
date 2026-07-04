@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { KeyValuePair } from '../../types/types';
 import { Trash2, Circle, CheckCircle2 } from 'lucide-react';
 
@@ -23,6 +23,14 @@ export function KeyValueEditor({
 }: KeyValueEditorProps) {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [filterText, setFilterText] = useState('');
+
+  // New rows only appear when the last row gains content, so an empty list
+  // (e.g. set by an AI tool) would leave the editor without any input row.
+  useEffect(() => {
+    if (items.length === 0) {
+      onChange([{ id: generateId(), enabled: true, key: '', value: '' }]);
+    }
+  }, [items, onChange]);
 
   const updateItem = (id: string, field: keyof KeyValuePair, value: string | boolean) => {
     const newItems = items.map((item) =>

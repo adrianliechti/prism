@@ -149,8 +149,15 @@ export function ResponseViewer() {
       case 'rest':
       default:
         if (response) {
+          if (response.bodyOmitted && response.body.size === 0) {
+            return (
+              <div className="h-full flex items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
+                Response body was too large to keep in history. Re-send the request to view it.
+              </div>
+            );
+          }
           return (
-            <HttpResponseViewer 
+            <HttpResponseViewer
               response={response}
               viewMode={viewMode}
             />

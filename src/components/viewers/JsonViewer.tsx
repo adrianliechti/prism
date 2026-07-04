@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHighlighter, highlightedCodeClasses } from './useHighlighter';
+import { decodeBlobText } from '../../utils/format';
 
 interface JsonViewerProps {
   content: Blob;
@@ -19,7 +20,7 @@ export function JsonViewer({ content }: JsonViewerProps) {
 
   useEffect(() => {
     let cancelled = false;
-    content.text().then((text) => {
+    decodeBlobText(content).then((text) => {
       if (!cancelled) setCode(formatJson(text));
     });
     return () => { cancelled = true; };

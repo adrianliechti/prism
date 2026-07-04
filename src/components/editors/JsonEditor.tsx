@@ -123,10 +123,7 @@ export function JsonEditor({ value, onChange, variables, onVariablesChange, plac
           
           const parsed = JSON.parse(content);
           let formatted = JSON.stringify(parsed, null, 2);
-          
-          formatted = formatted.replace(/\{\}/g, '{\n}');
-          formatted = formatted.replace(/\[\]/g, '[\n]');
-          
+
           placeholders.forEach((original, ph) => {
             formatted = formatted.replace(ph, original);
           });
@@ -149,9 +146,14 @@ export function JsonEditor({ value, onChange, variables, onVariablesChange, plac
     };
   }, [jsonValidity.valid, jsonValidity.empty, value, onChange]);
 
-  // Initial build and rebuild when switching back from raw mode
+  // Initial build and rebuild when switching back from raw mode. Guard on
+  // the showRaw transition — buildDOM's identity changes every keystroke, and
+  // rebuilding per keypress resets the DOM under the caret and breaks IME.
+  const prevShowRawRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (!showRaw) {
+    const prev = prevShowRawRef.current;
+    prevShowRawRef.current = showRaw;
+    if (!showRaw && (prev === null || prev === true)) {
       buildDOM();
     }
   }, [showRaw, buildDOM]);

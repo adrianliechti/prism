@@ -16,6 +16,8 @@ export interface McpFeature {
 export interface McpListFeaturesResponse {
   tools: McpFeature[];
   resources: McpFeature[];
+  /** per-section listing failures reported by the backend */
+  errors?: string[];
   error?: string;
 }
 
@@ -120,6 +122,8 @@ export interface HttpResponse {
   statusCode: number;
   headers: Record<string, string>;
   body: Blob;
+  /** true when the body was too large to persist and is empty after reload */
+  bodyOmitted?: boolean;
   duration: number;
   error?: string;
 }

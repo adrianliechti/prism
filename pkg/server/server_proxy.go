@@ -2,10 +2,10 @@ package server
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -33,13 +33,19 @@ func (t *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return client.Do(clientReq)
 }
 
+// setCORSHeaders makes proxy responses readable when the UI runs on a
+// different origin than this server.
+func setCORSHeaders(h http.Header) {
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "*")
+	h.Set("Access-Control-Allow-Headers", "*")
+	h.Set("Access-Control-Expose-Headers", "*")
+}
+
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		// CORS preflight (only sent when the UI runs on a different origin)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "*")
+		setCORSHeaders(w.Header())
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -51,6 +57,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	targetURL, err := url.Parse(scheme + "://" + host)
 
 	if err != nil {
+		setCORSHeaders(w.Header())
 		http.Error(w, "Invalid target URL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -59,7 +66,10 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = "/" + path
 	r.URL.RawPath = ""
 
-	followRedirect := r.Header.Get("X-Prism-Redirect") == "true"
+	// Redirect handling is opt-in via X-Prism-Redirect ("true" = follow
+	// server-side, "false" = surface the 3xx). Consumers that don't send the
+	// header (OpenAI panel, chat adapter) get redirects passed through as-is.
+	redirectMode := r.Header.Get("X-Prism-Redirect")
 
 	transport := proxyTransport
 	if r.Header.Get("X-Prism-Insecure") == "true" {
@@ -67,7 +77,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rt http.RoundTripper = transport
-	if followRedirect {
+	if redirectMode == "true" {
 		rt = &redirectTransport{base: transport}
 	}
 
@@ -112,28 +122,43 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		},
 
 		ModifyResponse: func(resp *http.Response) error {
-			// With redirect-following off, mask 3xx statuses so the browser
-			// fetch in the UI reports them instead of following Location
-			// itself; the UI restores the code from X-Prism-Status.
-			if !followRedirect && resp.Header.Get("Location") != "" {
+			// Never let the upstream spoof our control header.
+			resp.Header.Del("X-Prism-Status")
+
+			// With redirect-following explicitly off, mask 3xx statuses so
+			// the browser fetch in the UI reports them instead of following
+			// Location itself; the UI restores the code from X-Prism-Status.
+			if redirectMode == "false" && resp.Header.Get("Location") != "" {
 				switch resp.StatusCode {
 				case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
 					http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-					resp.Header.Set("X-Prism-Status", strconv.Itoa(resp.StatusCode))
+					resp.Header.Set("X-Prism-Status", resp.Status)
 					resp.StatusCode = http.StatusOK
 					resp.Status = "200 OK"
 				}
 			}
 
-			// Add CORS headers only when the upstream didn't set its own, so
-			// they never duplicate (browsers reject doubled values).
-			if resp.Header.Get("Access-Control-Allow-Origin") == "" {
-				resp.Header.Set("Access-Control-Allow-Origin", "*")
+			// Upstream CORS headers must not reach the browser (they would
+			// conflict with ours), but the UI still wants to display them:
+			// move them aside under X-Prism-Upstream-<Name>.
+			for key, values := range resp.Header {
+				if !strings.HasPrefix(key, "Access-Control-") {
+					continue
+				}
+				resp.Header.Del(key)
+				for _, v := range values {
+					resp.Header.Add("X-Prism-Upstream-"+key, v)
+				}
 			}
-			if resp.Header.Get("Access-Control-Expose-Headers") == "" {
-				resp.Header.Set("Access-Control-Expose-Headers", "*")
-			}
+			setCORSHeaders(resp.Header)
 			return nil
+		},
+
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			// ModifyResponse never runs on transport errors; without CORS
+			// headers a cross-origin UI can't read the error text.
+			setCORSHeaders(w.Header())
+			http.Error(w, fmt.Sprintf("proxy error: %v", err), http.StatusBadGateway)
 		},
 	}
 

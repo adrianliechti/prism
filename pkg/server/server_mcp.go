@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,10 +24,10 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
-// connectMcp creates a new MCP client, connects to the server via Streamable
-// HTTP (falling back to the legacy SSE transport), and returns the session.
-// The caller is responsible for closing the session.
-func connectMcp(ctx context.Context, serverURL string, headers map[string]string) (*mcp.ClientSession, error) {
+// connectMcp creates a new MCP client and connects to the server, preferring
+// the transport that worked last time for this URL (Streamable HTTP first by
+// default, legacy SSE as fallback). The caller must close the session.
+func (s *Server) connectMcp(ctx context.Context, serverURL string, headers map[string]string) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "prism",
 		Version: "1.0.0",
@@ -45,52 +44,52 @@ func connectMcp(ctx context.Context, serverURL string, headers map[string]string
 		}
 	}
 
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:   serverURL,
-		HTTPClient: httpClient,
-	}, nil)
+	streamable := &mcp.StreamableClientTransport{Endpoint: serverURL, HTTPClient: httpClient}
+	sse := &mcp.SSEClientTransport{Endpoint: serverURL, HTTPClient: httpClient}
+
+	first, second := mcp.Transport(streamable), mcp.Transport(sse)
+	if kind, ok := s.mcpTransports.Load(serverURL); ok && kind == "sse" {
+		first, second = second, first
+	}
+
+	session, err := client.Connect(ctx, first, nil)
 	if err == nil {
+		s.rememberMcpTransport(serverURL, first, streamable)
 		return session, nil
 	}
 	if ctx.Err() != nil {
 		return nil, err
 	}
 
-	// Older servers only speak the SSE transport
-	session, sseErr := client.Connect(ctx, &mcp.SSEClientTransport{
-		Endpoint:   serverURL,
-		HTTPClient: httpClient,
-	}, nil)
-	if sseErr != nil {
-		return nil, errors.Join(err, sseErr)
+	session, secondErr := client.Connect(ctx, second, nil)
+	if secondErr != nil {
+		return nil, errors.Join(err, secondErr)
 	}
 
+	s.rememberMcpTransport(serverURL, second, streamable)
 	return session, nil
 }
 
+func (s *Server) rememberMcpTransport(serverURL string, used mcp.Transport, streamable mcp.Transport) {
+	if used == streamable {
+		s.mcpTransports.Store(serverURL, "streamable")
+	} else {
+		s.mcpTransports.Store(serverURL, "sse")
+	}
+}
+
+// mcpTargetURL returns the target server URL from the ?server= query
+// parameter (the full URL including any path and query).
 func mcpTargetURL(r *http.Request) (string, error) {
 	if server := r.URL.Query().Get("server"); server != "" {
 		return server, nil
 	}
-
-	scheme := r.PathValue("scheme")
-	host := r.PathValue("host")
-	path := r.URL.Query().Get("path")
-
-	if scheme == "" || host == "" {
-		return "", fmt.Errorf("missing scheme or host")
-	}
-
-	target := scheme + "://" + host
-	if path != "" {
-		target += "/" + strings.TrimPrefix(path, "/")
-	}
-
-	return target, nil
+	return "", fmt.Errorf("missing server parameter")
 }
 
-// handleMcpListFeatures handles POST /proxy/mcp/{scheme}/{host}/features?path=...
-// It connects to the MCP server, fetches tools and resources, and returns them combined.
+// handleMcpListFeatures handles POST /proxy/mcp/{scheme}/{host}/features?server=...
+// It connects to the MCP server, fetches tools and resources (best effort),
+// and returns them combined; listing failures are reported per section.
 // Request body: McpListFeaturesRequest (optional, for headers)
 func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 	serverURL, err := mcpTargetURL(r)
@@ -107,61 +106,60 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL, req.Headers)
+	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer session.Close()
 
-	// Only list what the server advertises; the iterators follow pagination.
+	// Listing is attempted regardless of advertised capabilities (lax servers
+	// omit them); errors are only surfaced for sections the server advertised.
 	capabilities := session.InitializeResult().Capabilities
 
-	var tools []McpFeature
-	if capabilities.Tools != nil {
-		for tool, err := range session.Tools(ctx, nil) {
-			if err != nil {
-				http.Error(w, "failed to list tools: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			feature := McpFeature{
-				Name:        tool.Name,
-				Description: tool.Description,
-			}
-			if tool.InputSchema != nil {
-				schemaBytes, _ := json.Marshal(tool.InputSchema)
-				feature.Schema = schemaBytes
-			}
-			tools = append(tools, feature)
-		}
-	}
-
-	var resources []McpFeature
-	if capabilities.Resources != nil {
-		for resource, err := range session.Resources(ctx, nil) {
-			if err != nil {
-				http.Error(w, "failed to list resources: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			resources = append(resources, McpFeature{
-				Name:        resource.Name,
-				Description: resource.Description,
-				URI:         resource.URI,
-				MimeType:    resource.MIMEType,
-			})
-		}
-	}
-
 	response := McpListFeaturesResponse{
-		Tools:     tools,
-		Resources: resources,
+		Tools:     []McpFeature{},
+		Resources: []McpFeature{},
+	}
+
+	for tool, err := range session.Tools(ctx, nil) {
+		if err != nil {
+			if capabilities.Tools != nil {
+				response.Errors = append(response.Errors, "failed to list tools: "+err.Error())
+			}
+			break
+		}
+		feature := McpFeature{
+			Name:        tool.Name,
+			Description: tool.Description,
+		}
+		if tool.InputSchema != nil {
+			schemaBytes, _ := json.Marshal(tool.InputSchema)
+			feature.Schema = schemaBytes
+		}
+		response.Tools = append(response.Tools, feature)
+	}
+
+	for resource, err := range session.Resources(ctx, nil) {
+		if err != nil {
+			if capabilities.Resources != nil {
+				response.Errors = append(response.Errors, "failed to list resources: "+err.Error())
+			}
+			break
+		}
+		response.Resources = append(response.Resources, McpFeature{
+			Name:        resource.Name,
+			Description: resource.Description,
+			URI:         resource.URI,
+			MimeType:    resource.MIMEType,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleMcpCallTool handles POST /proxy/mcp/{scheme}/{host}/tool/call?path=...
+// handleMcpCallTool handles POST /proxy/mcp/{scheme}/{host}/tool/call?server=...
 // Request body: McpCallToolRequest
 func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 	serverURL, err := mcpTargetURL(r)
@@ -178,7 +176,7 @@ func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL, req.Headers)
+	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return
@@ -199,7 +197,7 @@ func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// handleMcpReadResource handles POST /proxy/mcp/{scheme}/{host}/resource/call?path=...
+// handleMcpReadResource handles POST /proxy/mcp/{scheme}/{host}/resource/call?server=...
 // Request body: McpReadResourceRequest
 func (s *Server) handleMcpReadResource(w http.ResponseWriter, r *http.Request) {
 	serverURL, err := mcpTargetURL(r)
@@ -216,7 +214,7 @@ func (s *Server) handleMcpReadResource(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	session, err := connectMcp(ctx, serverURL, req.Headers)
+	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
 		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 		return

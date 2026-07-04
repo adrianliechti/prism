@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { codeToHtml } from 'shiki';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { decodeBlobText } from '../../utils/format';
 
 interface SSEViewerProps {
   content: Blob;
@@ -31,13 +32,14 @@ function usePrefersDarkMode() {
 
 function parseSSEEvents(text: string): SSEEvent[] {
   const events: SSEEvent[] = [];
-  const rawEvents = text.split(/\n\n+/);
+  // Events are separated by blank lines; the spec allows \r\n as well.
+  const rawEvents = text.split(/(?:\r?\n){2,}/);
 
   for (const rawEvent of rawEvents) {
     if (!rawEvent.trim()) continue;
 
     const event: SSEEvent = { data: '', raw: rawEvent };
-    const lines = rawEvent.split('\n');
+    const lines = rawEvent.split(/\r?\n/);
 
     for (const line of lines) {
       if (line.startsWith('id:')) {
@@ -45,7 +47,8 @@ function parseSSEEvents(text: string): SSEEvent[] {
       } else if (line.startsWith('event:')) {
         event.event = line.slice(6).trim();
       } else if (line.startsWith('data:')) {
-        event.data += (event.data ? '\n' : '') + line.slice(5).trim();
+        // only the single leading space is stripped; data is whitespace-significant
+        event.data += (event.data ? '\n' : '') + line.slice(5).replace(/^ /, '');
       } else if (line.startsWith('retry:')) {
         event.retry = parseInt(line.slice(6).trim(), 10);
       }
@@ -145,7 +148,7 @@ export function EventStreamViewer({ content }: SSEViewerProps) {
   const prefersDark = usePrefersDarkMode();
 
   useEffect(() => {
-    content.text().then((text) => {
+    decodeBlobText(content).then((text) => {
       setRawText(text);
       setEvents(parseSSEEvents(text));
     });

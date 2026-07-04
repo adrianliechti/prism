@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -60,8 +61,8 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Forward HTTP headers as gRPC metadata (also used for reflection, so
-	// auth-protected reflection services work)
+	// User metadata arrives smuggled as X-Prism-Header-*; it is also sent for
+	// the reflection calls, so auth-protected reflection services work.
 	ctx = metadata.NewOutgoingContext(ctx, grpcMetadataFromRequest(r))
 
 	conn, err := grpc.NewClient(host, grpcTransportCredentials(scheme, r.Header.Get("X-Prism-Insecure") == "true"))
@@ -73,15 +74,27 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 
 	defer conn.Close()
 
-	reqMsg, methodDesc, err := messageFromJSON(ctx, conn, service, method, jsonBody)
+	methodDesc, err := findMethodDescriptor(ctx, conn, service, method)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if methodDesc.IsStreamingClient() || methodDesc.IsStreamingServer() {
-		http.Error(w, "streaming methods are not supported", http.StatusNotImplemented)
+	if methodDesc.IsStreamingClient() {
+		http.Error(w, "client/bidirectional streaming methods are not supported", http.StatusNotImplemented)
+		return
+	}
+
+	reqMsg := dynamicpb.NewMessage(methodDesc.Input())
+
+	if err := protojson.Unmarshal(jsonBody, reqMsg); err != nil {
+		http.Error(w, fmt.Sprintf("failed to unmarshal JSON to proto: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if methodDesc.IsStreamingServer() {
+		invokeServerStream(ctx, w, conn, fmt.Sprintf("/%s/%s", service, method), methodDesc, reqMsg)
 		return
 	}
 
@@ -91,17 +104,9 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	invokeErr := conn.Invoke(ctx, fmt.Sprintf("/%s/%s", service, method), reqMsg, respMsg, grpc.Header(&respHeader), grpc.Trailer(&respTrailer))
 
 	// Write response metadata as HTTP headers (also on errors, where trailers
-	// often carry details)
-	for k, vals := range respHeader {
-		for _, v := range vals {
-			w.Header().Add("Grpc-Header-"+k, v)
-		}
-	}
-	for k, vals := range respTrailer {
-		for _, v := range vals {
-			w.Header().Add("Grpc-Trailer-"+k, v)
-		}
-	}
+	// often carry details). Binary metadata is base64-encoded.
+	writeGRPCMetadata(w.Header(), "Grpc-Header-", respHeader)
+	writeGRPCMetadata(w.Header(), "Grpc-Trailer-", respTrailer)
 
 	if invokeErr != nil {
 		st := status.Convert(invokeErr)
@@ -124,34 +129,113 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResp)
 }
 
-// hop-by-hop or browser-generated headers that must not leak into gRPC metadata
-var skipGRPCMetadata = map[string]bool{
-	"content-type":    true,
-	"content-length":  true,
-	"host":            true,
-	"accept":          true,
-	"user-agent":      true,
-	"accept-encoding": true,
-	"accept-language": true,
-	"connection":      true,
-	"origin":          true,
-	"referer":         true,
-	"cookie":          true,
-	"cache-control":   true,
-	"pragma":          true,
-	"priority":        true,
-	"dnt":             true,
+// invokeServerStream calls a server-streaming method and returns the received
+// messages as a JSON array (capped; a hit cap is flagged via header).
+func invokeServerStream(ctx context.Context, w http.ResponseWriter, conn *grpc.ClientConn, fullMethod string, methodDesc protoreflect.MethodDescriptor, reqMsg proto.Message) {
+	const maxStreamMessages = 256
+
+	stream, err := conn.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, fullMethod)
+
+	if err == nil {
+		if sendErr := stream.SendMsg(reqMsg); sendErr != nil {
+			err = sendErr
+		} else {
+			err = stream.CloseSend()
+		}
+	}
+
+	if err != nil {
+		st := status.Convert(err)
+		w.Header().Set("Grpc-Status", st.Code().String())
+		w.Header().Set("Grpc-Message", st.Message())
+		http.Error(w, fmt.Sprintf("gRPC call failed: %s: %s", st.Code(), st.Message()), httpStatusFromGRPCCode(st.Code()))
+		return
+	}
+
+	messages := []json.RawMessage{}
+	truncated := false
+
+	var streamErr error
+	for {
+		if len(messages) == maxStreamMessages {
+			truncated = true
+			break
+		}
+		respMsg := dynamicpb.NewMessage(methodDesc.Output())
+		if recvErr := stream.RecvMsg(respMsg); recvErr != nil {
+			if recvErr != io.EOF {
+				streamErr = recvErr
+			}
+			break
+		}
+		raw, marshalErr := protojson.Marshal(respMsg)
+		if marshalErr != nil {
+			streamErr = marshalErr
+			break
+		}
+		messages = append(messages, raw)
+	}
+
+	if header, headerErr := stream.Header(); headerErr == nil {
+		writeGRPCMetadata(w.Header(), "Grpc-Header-", header)
+	}
+	writeGRPCMetadata(w.Header(), "Grpc-Trailer-", stream.Trailer())
+
+	if streamErr != nil && len(messages) == 0 {
+		st := status.Convert(streamErr)
+		w.Header().Set("Grpc-Status", st.Code().String())
+		w.Header().Set("Grpc-Message", st.Message())
+		http.Error(w, fmt.Sprintf("gRPC call failed: %s: %s", st.Code(), st.Message()), httpStatusFromGRPCCode(st.Code()))
+		return
+	}
+
+	if streamErr != nil {
+		// partial results: report the late error alongside what was received
+		st := status.Convert(streamErr)
+		w.Header().Set("Grpc-Status", st.Code().String())
+		w.Header().Set("Grpc-Message", st.Message())
+	} else {
+		w.Header().Set("Grpc-Status", codes.OK.String())
+	}
+	if truncated {
+		w.Header().Set("Grpc-Stream-Truncated", "true")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(messages)
 }
 
+func writeGRPCMetadata(h http.Header, prefix string, md metadata.MD) {
+	for k, vals := range md {
+		for _, v := range vals {
+			if strings.HasSuffix(k, "-bin") {
+				v = base64.StdEncoding.EncodeToString([]byte(v))
+			}
+			h.Add(prefix+k, v)
+		}
+	}
+}
+
+// grpcMetadataFromRequest builds outgoing metadata exclusively from smuggled
+// X-Prism-Header-* headers, so browser artifacts never leak into gRPC
+// metadata and no user key gets blocklisted. Values for -bin keys are
+// expected base64-encoded (grpcurl convention).
 func grpcMetadataFromRequest(r *http.Request) metadata.MD {
 	md := metadata.New(nil)
 	for key, values := range r.Header {
-		lowerKey := strings.ToLower(key)
-		if skipGRPCMetadata[lowerKey] || strings.HasPrefix(lowerKey, "x-prism-") || strings.HasPrefix(lowerKey, "sec-") {
+		name, ok := strings.CutPrefix(key, "X-Prism-Header-")
+		if !ok || name == "" {
 			continue
 		}
+		name = strings.ToLower(name)
 		for _, v := range values {
-			md.Append(lowerKey, v)
+			if strings.HasSuffix(name, "-bin") {
+				if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
+					v = string(decoded)
+				}
+			}
+			md.Append(name, v)
 		}
 	}
 	return md
@@ -215,7 +299,7 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 
 	defer conn.Close()
 
-	services, err := reflectServices(ctx, conn)
+	services, err := reflectAllServices(ctx, conn)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to list services: %v", err), http.StatusBadGateway)
@@ -227,15 +311,8 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, svc := range services {
-		serviceName := string(svc.FullName())
-
-		// Filter out reflection service
-		if strings.HasPrefix(serviceName, "grpc.reflection.") {
-			continue
-		}
-
 		svcReflection := ServiceReflection{
-			Name:    serviceName,
+			Name:    string(svc.FullName()),
 			Methods: []MethodReflection{},
 		}
 
@@ -348,124 +425,102 @@ func buildScalarSchema(field protoreflect.FieldDescriptor, visited map[protorefl
 	return schema
 }
 
-func messageFromJSON(ctx context.Context, conn *grpc.ClientConn, service, method string, jsonBody []byte) (proto.Message, protoreflect.MethodDescriptor, error) {
-	services, err := reflectServices(ctx, conn)
+// --- reflection protocol client ---
+//
+// All logic speaks the v1 message types; v1alpha (wire-identical, deprecated)
+// is supported by transcoding messages between the two packages.
 
-	if err != nil {
-		return nil, nil, err
-	}
-
-	svc, err := findService(services, service)
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	desc, err := findMethod(svc, method)
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	msg := dynamicpb.NewMessage(desc.Input())
-
-	if err := protojson.Unmarshal(jsonBody, msg); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal JSON to proto: %w", err)
-	}
-
-	return msg, desc, nil
-}
-
-// reflectStream abstracts the v1 and v1alpha reflection protocols
-// (identical wire format, different proto packages).
-type reflectStream interface {
-	listServices() ([]string, error)
-	fileContainingSymbol(symbol string) ([][]byte, error)
-	fileByFilename(name string) ([][]byte, error)
+type reflectionClient interface {
+	roundTrip(req *grpc_reflection_v1.ServerReflectionRequest) (*grpc_reflection_v1.ServerReflectionResponse, error)
 }
 
 type reflectV1 struct {
 	stream grpc_reflection_v1.ServerReflection_ServerReflectionInfoClient
 }
 
-func (s *reflectV1) listServices() ([]string, error) {
-	if err := s.stream.Send(&grpc_reflection_v1.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_ListServices{ListServices: ""},
-	}); err != nil {
+func (c *reflectV1) roundTrip(req *grpc_reflection_v1.ServerReflectionRequest) (*grpc_reflection_v1.ServerReflectionResponse, error) {
+	if err := c.stream.Send(req); err != nil {
 		return nil, err
 	}
-
-	resp, err := s.stream.Recv()
-
-	if err != nil {
-		return nil, err
-	}
-
-	if errResp := resp.GetErrorResponse(); errResp != nil {
-		return nil, status.Error(codes.Code(errResp.ErrorCode), errResp.ErrorMessage)
-	}
-
-	listResp := resp.GetListServicesResponse()
-
-	if listResp == nil {
-		return nil, fmt.Errorf("no services response received")
-	}
-
-	names := make([]string, 0, len(listResp.Service))
-	for _, svc := range listResp.Service {
-		names = append(names, svc.Name)
-	}
-	return names, nil
-}
-
-func (s *reflectV1) files(req *grpc_reflection_v1.ServerReflectionRequest) ([][]byte, error) {
-	if err := s.stream.Send(req); err != nil {
-		return nil, err
-	}
-
-	resp, err := s.stream.Recv()
-
-	if err != nil {
-		return nil, err
-	}
-
-	if errResp := resp.GetErrorResponse(); errResp != nil {
-		return nil, status.Error(codes.Code(errResp.ErrorCode), errResp.ErrorMessage)
-	}
-
-	fdResp := resp.GetFileDescriptorResponse()
-
-	if fdResp == nil {
-		return nil, fmt.Errorf("no file descriptor response received")
-	}
-
-	return fdResp.FileDescriptorProto, nil
-}
-
-func (s *reflectV1) fileContainingSymbol(symbol string) ([][]byte, error) {
-	return s.files(&grpc_reflection_v1.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_FileContainingSymbol{FileContainingSymbol: symbol},
-	})
-}
-
-func (s *reflectV1) fileByFilename(name string) ([][]byte, error) {
-	return s.files(&grpc_reflection_v1.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_FileByFilename{FileByFilename: name},
-	})
+	return c.stream.Recv()
 }
 
 type reflectV1Alpha struct {
 	stream grpc_reflection_v1alpha.ServerReflection_ServerReflectionInfoClient
 }
 
-func (s *reflectV1Alpha) listServices() ([]string, error) {
-	if err := s.stream.Send(&grpc_reflection_v1alpha.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_ListServices{ListServices: ""},
-	}); err != nil {
+func (c *reflectV1Alpha) roundTrip(req *grpc_reflection_v1.ServerReflectionRequest) (*grpc_reflection_v1.ServerReflectionResponse, error) {
+	alphaReq := &grpc_reflection_v1alpha.ServerReflectionRequest{}
+	if err := transcode(req, alphaReq); err != nil {
 		return nil, err
 	}
 
-	resp, err := s.stream.Recv()
+	if err := c.stream.Send(alphaReq); err != nil {
+		return nil, err
+	}
+
+	alphaResp, err := c.stream.Recv()
+
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &grpc_reflection_v1.ServerReflectionResponse{}
+	if err := transcode(alphaResp, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// transcode converts between wire-identical message types (v1 <-> v1alpha).
+func transcode(src, dst proto.Message) error {
+	raw, err := proto.Marshal(src)
+	if err != nil {
+		return err
+	}
+	return proto.Unmarshal(raw, dst)
+}
+
+// autoReflectionClient opens the v1 reflection stream lazily and, if the
+// first exchange fails for any reason, retries it once over v1alpha for
+// servers that only register the deprecated variant.
+type autoReflectionClient struct {
+	ctx        context.Context
+	conn       *grpc.ClientConn
+	client     reflectionClient
+	triedAlpha bool
+}
+
+func (a *autoReflectionClient) roundTrip(req *grpc_reflection_v1.ServerReflectionRequest) (*grpc_reflection_v1.ServerReflectionResponse, error) {
+	if a.client == nil {
+		stream, err := grpc_reflection_v1.NewServerReflectionClient(a.conn).ServerReflectionInfo(a.ctx)
+		if err != nil {
+			return nil, err
+		}
+		a.client = &reflectV1{stream: stream}
+	}
+
+	resp, err := a.client.roundTrip(req)
+
+	if err != nil && !a.triedAlpha {
+		a.triedAlpha = true
+		if stream, alphaErr := grpc_reflection_v1alpha.NewServerReflectionClient(a.conn).ServerReflectionInfo(a.ctx); alphaErr == nil {
+			alpha := &reflectV1Alpha{stream: stream}
+			if alphaResp, alphaErr := alpha.roundTrip(req); alphaErr == nil {
+				a.client = alpha
+				return alphaResp, nil
+			}
+		}
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func reflectListServices(c reflectionClient) ([]string, error) {
+	resp, err := c.roundTrip(&grpc_reflection_v1.ServerReflectionRequest{
+		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_ListServices{ListServices: ""},
+	})
 
 	if err != nil {
 		return nil, err
@@ -488,12 +543,8 @@ func (s *reflectV1Alpha) listServices() ([]string, error) {
 	return names, nil
 }
 
-func (s *reflectV1Alpha) files(req *grpc_reflection_v1alpha.ServerReflectionRequest) ([][]byte, error) {
-	if err := s.stream.Send(req); err != nil {
-		return nil, err
-	}
-
-	resp, err := s.stream.Recv()
+func reflectFiles(c reflectionClient, req *grpc_reflection_v1.ServerReflectionRequest) ([][]byte, error) {
+	resp, err := c.roundTrip(req)
 
 	if err != nil {
 		return nil, err
@@ -512,55 +563,22 @@ func (s *reflectV1Alpha) files(req *grpc_reflection_v1alpha.ServerReflectionRequ
 	return fdResp.FileDescriptorProto, nil
 }
 
-func (s *reflectV1Alpha) fileContainingSymbol(symbol string) ([][]byte, error) {
-	return s.files(&grpc_reflection_v1alpha.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_FileContainingSymbol{FileContainingSymbol: symbol},
+func fileContainingSymbol(c reflectionClient, symbol string) ([][]byte, error) {
+	return reflectFiles(c, &grpc_reflection_v1.ServerReflectionRequest{
+		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_FileContainingSymbol{FileContainingSymbol: symbol},
 	})
 }
 
-func (s *reflectV1Alpha) fileByFilename(name string) ([][]byte, error) {
-	return s.files(&grpc_reflection_v1alpha.ServerReflectionRequest{
-		MessageRequest: &grpc_reflection_v1alpha.ServerReflectionRequest_FileByFilename{FileByFilename: name},
+func fileByFilename(c reflectionClient, name string) ([][]byte, error) {
+	return reflectFiles(c, &grpc_reflection_v1.ServerReflectionRequest{
+		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_FileByFilename{FileByFilename: name},
 	})
 }
 
-// openReflection connects to the v1 reflection service, falling back to
-// v1alpha for servers that only register the deprecated variant.
-func openReflection(ctx context.Context, conn *grpc.ClientConn) (reflectStream, []string, error) {
-	if stream, err := grpc_reflection_v1.NewServerReflectionClient(conn).ServerReflectionInfo(ctx); err == nil {
-		rs := &reflectV1{stream: stream}
-		names, err := rs.listServices()
-		if err == nil {
-			return rs, names, nil
-		}
-		if status.Code(err) != codes.Unimplemented {
-			return nil, nil, err
-		}
-	}
-
-	stream, err := grpc_reflection_v1alpha.NewServerReflectionClient(conn).ServerReflectionInfo(ctx)
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	rs := &reflectV1Alpha{stream: stream}
-	names, err := rs.listServices()
-
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return rs, names, nil
-}
-
-func reflectServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect.ServiceDescriptor, error) {
-	stream, names, err := openReflection(ctx, conn)
-
-	if err != nil {
-		return nil, err
-	}
-
+// collectFiles fetches the descriptor files covering the given symbols plus
+// their transitive imports, backfilling deps the server omits from the local
+// well-known-type registry.
+func collectFiles(c reflectionClient, symbols []string) map[string]*descriptorpb.FileDescriptorProto {
 	fdProtos := map[string]*descriptorpb.FileDescriptorProto{}
 
 	addFiles := func(raw [][]byte) {
@@ -575,25 +593,20 @@ func reflectServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect
 		}
 	}
 
-	for _, name := range names {
-		if strings.HasPrefix(name, "grpc.reflection.") {
-			continue
-		}
-		raw, err := stream.fileContainingSymbol(name)
+	for _, symbol := range symbols {
+		raw, err := fileContainingSymbol(c, symbol)
 		if err != nil {
 			continue
 		}
 		addFiles(raw)
 	}
 
-	// Resolve missing imports: ask the server, then fall back to the local
-	// registry (covers well-known types when servers omit transitive deps).
 	for range 16 {
-		var missing []string
+		missing := map[string]bool{}
 		for _, fdProto := range fdProtos {
 			for _, dep := range fdProto.GetDependency() {
 				if _, ok := fdProtos[dep]; !ok {
-					missing = append(missing, dep)
+					missing[dep] = true
 				}
 			}
 		}
@@ -602,11 +615,8 @@ func reflectServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect
 		}
 
 		progress := false
-		for _, dep := range missing {
-			if _, ok := fdProtos[dep]; ok {
-				continue
-			}
-			if raw, err := stream.fileByFilename(dep); err == nil {
+		for dep := range missing {
+			if raw, err := fileByFilename(c, dep); err == nil {
 				addFiles(raw)
 			}
 			if _, ok := fdProtos[dep]; ok {
@@ -623,76 +633,116 @@ func reflectServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect
 		}
 	}
 
-	// Drop files whose dependency closure is incomplete so the rest still resolve.
-	resolvable := map[string]bool{}
-	var canResolve func(name string) bool
-	canResolve = func(name string) bool {
-		if v, ok := resolvable[name]; ok {
-			return v
-		}
-		fdProto, ok := fdProtos[name]
-		if !ok {
-			resolvable[name] = false
+	return fdProtos
+}
+
+// buildRegistry registers files in dependency order, skipping any file whose
+// closure is broken so the rest still resolve (best effort, like grpcurl).
+func buildRegistry(fdProtos map[string]*descriptorpb.FileDescriptorProto) *protoregistry.Files {
+	files := new(protoregistry.Files)
+
+	const (
+		stateFailed     = 1
+		stateRegistered = 2
+	)
+	state := map[string]int{}
+
+	var register func(name string) bool
+	register = func(name string) bool {
+		switch state[name] {
+		case stateRegistered:
+			return true
+		case stateFailed:
 			return false
 		}
-		resolvable[name] = true
+		state[name] = stateFailed // guards cycles; overwritten on success
+
+		fdProto, ok := fdProtos[name]
+		if !ok {
+			return false
+		}
 		for _, dep := range fdProto.GetDependency() {
-			if !canResolve(dep) {
-				resolvable[name] = false
+			if !register(dep) {
 				return false
 			}
 		}
+
+		fd, err := protodesc.NewFile(fdProto, files)
+		if err != nil {
+			return false
+		}
+		if err := files.RegisterFile(fd); err != nil {
+			return false
+		}
+		state[name] = stateRegistered
 		return true
 	}
 
-	fdSet := &descriptorpb.FileDescriptorSet{}
-	for name, fdProto := range fdProtos {
-		if canResolve(name) {
-			fdSet.File = append(fdSet.File, fdProto)
-		}
+	for name := range fdProtos {
+		register(name)
 	}
 
-	files, err := protodesc.NewFiles(fdSet)
+	return files
+}
+
+// reflectAllServices lists every non-reflection service with full descriptors.
+func reflectAllServices(ctx context.Context, conn *grpc.ClientConn) ([]protoreflect.ServiceDescriptor, error) {
+	client := &autoReflectionClient{ctx: ctx, conn: conn}
+
+	names, err := reflectListServices(client)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to build descriptors: %w", err)
+		return nil, err
 	}
 
-	var allServices []protoreflect.ServiceDescriptor
-
+	var symbols []string
 	for _, name := range names {
-		desc, err := files.FindDescriptorByName(protoreflect.FullName(name))
+		if strings.HasPrefix(name, "grpc.reflection.") {
+			continue
+		}
+		symbols = append(symbols, name)
+	}
+
+	files := buildRegistry(collectFiles(client, symbols))
+
+	var services []protoreflect.ServiceDescriptor
+	for _, symbol := range symbols {
+		desc, err := files.FindDescriptorByName(protoreflect.FullName(symbol))
 		if err != nil {
 			continue
 		}
 		if svc, ok := desc.(protoreflect.ServiceDescriptor); ok {
-			allServices = append(allServices, svc)
+			services = append(services, svc)
 		}
 	}
 
-	return allServices, nil
+	return services, nil
 }
 
-func findService(services []protoreflect.ServiceDescriptor, service string) (protoreflect.ServiceDescriptor, error) {
-	for _, s := range services {
-		if string(s.FullName()) == service {
-			return s, nil
-		}
+// findMethodDescriptor resolves a single method for invocation without
+// reflecting the server's entire service list.
+func findMethodDescriptor(ctx context.Context, conn *grpc.ClientConn, service, method string) (protoreflect.MethodDescriptor, error) {
+	client := &autoReflectionClient{ctx: ctx, conn: conn}
+
+	files := buildRegistry(collectFiles(client, []string{service}))
+
+	desc, err := files.FindDescriptorByName(protoreflect.FullName(service))
+
+	if err != nil {
+		return nil, fmt.Errorf("service %s not found", service)
 	}
 
-	return nil, fmt.Errorf("service %s not found", service)
-}
+	svc, ok := desc.(protoreflect.ServiceDescriptor)
 
-func findMethod(service protoreflect.ServiceDescriptor, method string) (protoreflect.MethodDescriptor, error) {
-	methods := service.Methods()
-
-	for i := 0; i < methods.Len(); i++ {
-		m := methods.Get(i)
-
-		if string(m.Name()) == method {
-			return m, nil
-		}
+	if !ok {
+		return nil, fmt.Errorf("%s is not a service", service)
 	}
 
-	return nil, fmt.Errorf("method %s/%s not found", service.FullName(), method)
+	methodDesc := svc.Methods().ByName(protoreflect.Name(method))
+
+	if methodDesc == nil {
+		return nil, fmt.Errorf("method %s/%s not found", service, method)
+	}
+
+	return methodDesc, nil
 }

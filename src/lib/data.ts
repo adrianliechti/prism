@@ -65,8 +65,9 @@ interface HttpSettings {
     status: string;
     statusCode: number;
     headers: Record<string, string>;
-    body: string;        // base64 encoded
+    body: string;        // base64 encoded ('' when omitted for size)
     bodyType: string;
+    bodyOmitted?: boolean;
     duration: number;
     error?: string;
   };
@@ -149,6 +150,9 @@ interface SerializedRequest {
 // ============================================================================
 // Blob <-> Base64 Conversion Utilities
 // ============================================================================
+
+// Response bodies above this size are kept in memory but not persisted.
+const MAX_PERSISTED_BODY_SIZE = 2 * 1024 * 1024;
 
 async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -233,22 +237,22 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
         body = { ...body, file: null };
       }
 
-      // Serialize HTTP response with base64 body
+      // Serialize HTTP response with base64 body; very large bodies are not
+      // persisted (they would bloat every save and slow down startup).
       let httpResponse: HttpSettings['response'];
       if (req.http?.response) {
-        const responseBody = req.http.response.body instanceof Blob 
-          ? await blobToBase64(req.http.response.body) 
-          : '';
-        const bodyType = req.http.response.body instanceof Blob 
-          ? req.http.response.body.type 
-          : 'application/octet-stream';
-        
+        const bodyBlob = req.http.response.body instanceof Blob ? req.http.response.body : null;
+        const bodyOmitted = bodyBlob !== null && bodyBlob.size > MAX_PERSISTED_BODY_SIZE;
+        const responseBody = bodyBlob && !bodyOmitted ? await blobToBase64(bodyBlob) : '';
+        const bodyType = bodyBlob ? bodyBlob.type : 'application/octet-stream';
+
         httpResponse = {
           status: req.http.response.status,
           statusCode: req.http.response.statusCode,
           headers: req.http.response.headers,
           body: responseBody,
           bodyType,
+          bodyOmitted: bodyOmitted || undefined,
           duration: req.http.response.duration,
           error: req.http.response.error,
         };
@@ -329,9 +333,10 @@ function deserializeRequest(serialized: SerializedRequest): Request {
         status: http.response.status,
         statusCode: http.response.statusCode,
         headers: http.response.headers,
-        body: http.response.body 
+        body: http.response.body
           ? base64ToBlob(http.response.body, http.response.bodyType)
           : new Blob([]),
+        bodyOmitted: http.response.bodyOmitted,
         duration: http.response.duration,
         error: http.response.error,
       } : null,

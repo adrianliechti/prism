@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHighlighter, highlightedCodeClasses } from './useHighlighter';
+import { decodeBlobText } from '../../utils/format';
 
 interface XmlViewerProps {
   content: Blob;
@@ -39,7 +40,7 @@ export function XmlViewer({ content }: XmlViewerProps) {
 
   useEffect(() => {
     let cancelled = false;
-    content.text().then((text) => {
+    decodeBlobText(content).then((text) => {
       if (!cancelled) setCode(formatXml(text));
     });
     return () => { cancelled = true; };

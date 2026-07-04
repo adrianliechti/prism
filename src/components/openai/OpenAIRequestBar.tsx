@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useClient } from '../../context/useClient';
+import { buildOpenAIProxyPath } from '../../lib/proxy';
 import { ChevronDown, Cpu, RefreshCw, Key } from 'lucide-react';
 
 export function OpenAIRequestBar() {
@@ -15,18 +16,6 @@ export function OpenAIRequestBar() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
-
-  const buildOpenAIProxyPath = useCallback((baseUrl: string, endpoint: string) => {
-    try {
-      const urlObj = new URL(baseUrl);
-      const scheme = urlObj.protocol.replace(/:$/, '');
-      const host = urlObj.host;
-      const cleanEndpoint = endpoint.replace(/^\//, '');
-      return `/proxy/${scheme}/${host}/${cleanEndpoint}`;
-    } catch {
-      return '';
-    }
-  }, []);
 
   // Close menu on click outside
   useEffect(() => {
@@ -49,7 +38,7 @@ export function OpenAIRequestBar() {
     try {
       // Normalize URL - remove trailing slash
       const baseUrl = url.replace(/\/$/, '');
-      const proxyUrl = buildOpenAIProxyPath(baseUrl, '/v1/models');
+      const proxyUrl = buildOpenAIProxyPath(baseUrl, 'models');
       if (!proxyUrl) {
         throw new Error('Invalid OpenAI API URL');
       }
@@ -89,7 +78,7 @@ export function OpenAIRequestBar() {
     } finally {
       setLoading(false);
     }
-  }, [url, model, setOpenAIModel, apiKey, buildOpenAIProxyPath]);
+  }, [url, model, setOpenAIModel, apiKey]);
 
   // Fetch models when URL changes (debounced)
   useEffect(() => {

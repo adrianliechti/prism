@@ -33,10 +33,12 @@ func applyOpenAIConfig(cfg *Config) {
 
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
+	}
 
-		if model == "" {
-			model = "gpt-5.2"
-		}
+	// Without a model the UI hides the AI panel entirely, so always default
+	// one — also for custom gateways (they can override via OPENAI_MODEL).
+	if model == "" {
+		model = "gpt-5.2"
 	}
 
 	cfg.OpenAI = &OpenAIConfig{
