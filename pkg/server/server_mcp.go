@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -23,21 +25,19 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
-// connectMcp creates a new MCP client, connects to the server via Streamable HTTP,
-// and returns the session. The caller is responsible for closing the session.
+// connectMcp creates a new MCP client, connects to the server via Streamable
+// HTTP (falling back to the legacy SSE transport), and returns the session.
+// The caller is responsible for closing the session.
 func connectMcp(ctx context.Context, serverURL string, headers map[string]string) (*mcp.ClientSession, error) {
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "prism",
 		Version: "1.0.0",
 	}, nil)
 
-	transport := &mcp.StreamableClientTransport{
-		Endpoint: serverURL,
-	}
-
 	// Add custom headers via HTTP client if provided
+	var httpClient *http.Client
 	if len(headers) > 0 {
-		transport.HTTPClient = &http.Client{
+		httpClient = &http.Client{
 			Transport: &headerTransport{
 				base:    http.DefaultTransport,
 				headers: headers,
@@ -45,9 +45,24 @@ func connectMcp(ctx context.Context, serverURL string, headers map[string]string
 		}
 	}
 
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:   serverURL,
+		HTTPClient: httpClient,
+	}, nil)
+	if err == nil {
+		return session, nil
+	}
+	if ctx.Err() != nil {
 		return nil, err
+	}
+
+	// Older servers only speak the SSE transport
+	session, sseErr := client.Connect(ctx, &mcp.SSEClientTransport{
+		Endpoint:   serverURL,
+		HTTPClient: httpClient,
+	}, nil)
+	if sseErr != nil {
+		return nil, errors.Join(err, sseErr)
 	}
 
 	return session, nil
@@ -85,8 +100,9 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req McpListFeaturesRequest
-	if r.Body != nil && r.ContentLength > 0 {
-		json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	ctx := r.Context()
@@ -98,11 +114,16 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 	}
 	defer session.Close()
 
-	// Fetch tools
+	// Only list what the server advertises; the iterators follow pagination.
+	capabilities := session.InitializeResult().Capabilities
+
 	var tools []McpFeature
-	toolsResult, err := session.ListTools(ctx, nil)
-	if err == nil && toolsResult != nil {
-		for _, tool := range toolsResult.Tools {
+	if capabilities.Tools != nil {
+		for tool, err := range session.Tools(ctx, nil) {
+			if err != nil {
+				http.Error(w, "failed to list tools: "+err.Error(), http.StatusBadGateway)
+				return
+			}
 			feature := McpFeature{
 				Name:        tool.Name,
 				Description: tool.Description,
@@ -115,18 +136,19 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fetch resources
 	var resources []McpFeature
-	resourcesResult, err := session.ListResources(ctx, nil)
-	if err == nil && resourcesResult != nil {
-		for _, resource := range resourcesResult.Resources {
-			feature := McpFeature{
+	if capabilities.Resources != nil {
+		for resource, err := range session.Resources(ctx, nil) {
+			if err != nil {
+				http.Error(w, "failed to list resources: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			resources = append(resources, McpFeature{
 				Name:        resource.Name,
 				Description: resource.Description,
 				URI:         resource.URI,
 				MimeType:    resource.MIMEType,
-			}
-			resources = append(resources, feature)
+			})
 		}
 	}
 
@@ -169,7 +191,7 @@ func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 		Arguments: req.Arguments,
 	})
 	if err != nil {
-		http.Error(w, "tool call failed: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "tool call failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
@@ -206,7 +228,7 @@ func (s *Server) handleMcpReadResource(w http.ResponseWriter, r *http.Request) {
 		URI: req.URI,
 	})
 	if err != nil {
-		http.Error(w, "resource read failed: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "resource read failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 

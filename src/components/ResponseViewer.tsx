@@ -126,10 +126,11 @@ export function ResponseViewer() {
         if (mcpResponse?.result) {
           // Determine if it's a tool or resource response based on response shape
           const isToolResponse = 'content' in mcpResponse.result;
+          const isResourceResponse = !isToolResponse && 'contents' in mcpResponse.result;
           return (
-            <McpResponseViewer 
-              toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined} 
-              resourceResponse={!isToolResponse ? mcpResponse.result as McpReadResourceResponse : undefined}
+            <McpResponseViewer
+              toolResponse={isToolResponse ? mcpResponse.result as McpCallToolResponse : undefined}
+              resourceResponse={isResourceResponse ? mcpResponse.result as McpReadResourceResponse : undefined}
               viewMode={viewMode}
             />
           );

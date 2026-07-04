@@ -1,5 +1,14 @@
 import type { Variable } from '../types/types';
 
+function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
 export interface ResolveOptions {
   /** Placeholder text for missing data (default: empty string) */
   missingDataPlaceholder?: string;
@@ -16,59 +25,38 @@ export function resolveVariables(
 ): string {
   const { missingDataPlaceholder = '' } = options;
 
-  let resolved = content;
-  const variableRegex = /\{\{(\w+):([^}]+)\}\}/g;
-  let match;
-
-  while ((match = variableRegex.exec(content)) !== null) {
-    const [fullMatch, varType, varId] = match;
+  return content.replace(/\{\{(\w+):([^}]+)\}\}/g, (fullMatch, varType, varId) => {
     const variable = variables.find(v => v.type === varType && v.id === varId);
-    let replacement = '';
 
     switch (varType) {
       case 'file_base64':
-        replacement = variable?.data || missingDataPlaceholder;
-        break;
+        return variable?.data || missingDataPlaceholder;
       case 'base64':
-        // Encode the text to base64
-        if (variable?.data) {
-          replacement = btoa(variable.data);
-        } else {
-          replacement = missingDataPlaceholder;
-        }
-        break;
+        // Encode the text to base64 (UTF-8 safe; btoa alone throws on non-Latin1)
+        return variable?.data ? encodeBase64(variable.data) : missingDataPlaceholder;
       case 'file_dataurl':
         if (variable?.data && variable?.mimeType) {
-          replacement = `data:${variable.mimeType};base64,${variable.data}`;
-        } else if (variable?.data) {
-          replacement = `data:application/octet-stream;base64,${variable.data}`;
-        } else {
-          replacement = missingDataPlaceholder;
+          return `data:${variable.mimeType};base64,${variable.data}`;
         }
-        break;
+        if (variable?.data) {
+          return `data:application/octet-stream;base64,${variable.data}`;
+        }
+        return missingDataPlaceholder;
       case 'timestamp':
-        replacement = String(Date.now());
-        break;
+        return String(Date.now());
       case 'uuid':
         if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-          replacement = crypto.randomUUID();
-        } else {
-          // Fallback for environments without crypto.randomUUID
-          replacement = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = Math.random() * 16 | 0;
-            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-          });
+          return crypto.randomUUID();
         }
-        break;
+        // Fallback for environments without crypto.randomUUID
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
       case 'random_string':
-        replacement = Math.random().toString(36).substring(2, 18);
-        break;
+        return Math.random().toString(36).substring(2, 18);
       default:
-        replacement = fullMatch;
+        return fullMatch;
     }
-
-    resolved = resolved.replace(fullMatch, replacement);
-  }
-
-  return resolved;
+  });
 }

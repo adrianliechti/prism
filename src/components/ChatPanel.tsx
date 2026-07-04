@@ -2,7 +2,9 @@ import { useRef, useEffect, useState, useMemo } from 'react';
 import { Send, X, Trash2, Square, Loader2, Sparkles } from 'lucide-react';
 import { useChat, stream, type UIMessage } from '@tanstack/ai-react';
 import { chat, maxIterations } from '@tanstack/ai';
+import type { AnyClientTool } from '@tanstack/ai-client';
 import { createChatAdapter, getConfiguredModel } from '../api/chatAdapter';
+import type { AdapterConfig } from '../api/toolsCommon';
 import type { AllSetters } from '../types/chat';
 import type { Request } from '../types/types';
 import { Markdown } from './Markdown';
@@ -45,14 +47,23 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
   }, [request.http?.response]);
 
   // useChat doesn't propagate tools/connection updates after mount, so tools must
-  // read live state via a stable env object that we patch each render.
-  const envRef = useRef({ request, setters, responseBodyText });
-  envRef.current.request = request;
-  envRef.current.setters = setters;
-  envRef.current.responseBodyText = responseBodyText;
+  // read live state through a stable env object. The getters defer to a ref that an
+  // effect keeps current; tools only execute after effects flush, never during render.
+  const latestRef = useRef({ request, setters, responseBodyText });
+  useEffect(() => {
+    latestRef.current = { request, setters, responseBodyText };
+  });
+  const [env] = useState(() => ({
+    get request() { return latestRef.current.request; },
+    get setters() { return latestRef.current.setters; },
+    get responseBodyText() { return latestRef.current.responseBodyText; },
+  }));
 
-  const { tools, instructions, adapterConfig } = useMemo(() => {
-    const env = envRef.current;
+  const { tools, instructions, adapterConfig } = useMemo((): {
+    tools: AnyClientTool[];
+    instructions: string;
+    adapterConfig: AdapterConfig;
+  } => {
     switch (request.protocol) {
       case 'grpc':
         return {
@@ -80,7 +91,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
           adapterConfig: httpAdapterConfig,
         };
     }
-  }, [request.protocol]);
+  }, [request.protocol, env]);
 
   // Create connection adapter that wraps the chat() function
   const connection = useMemo(() => {

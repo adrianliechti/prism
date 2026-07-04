@@ -25,23 +25,29 @@ function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
 }
 
-function hasHeader(headers: Record<string, string>, headerName: string): boolean {
-  return Object.keys(headers).some((key) => key.toLowerCase() === headerName.toLowerCase());
+// Header names fetch() refuses to send directly; they are smuggled to the
+// proxy as X-Prism-Header-<name> and unwrapped there.
+const FORBIDDEN_FETCH_HEADERS = new Set([
+  'accept-charset', 'accept-encoding', 'access-control-request-headers',
+  'access-control-request-method', 'connection', 'content-length', 'cookie',
+  'cookie2', 'date', 'dnt', 'expect', 'host', 'keep-alive', 'origin',
+  'referer', 'set-cookie', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'via',
+]);
+
+function isForbiddenFetchHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return FORBIDDEN_FETCH_HEADERS.has(lower) || lower.startsWith('proxy-') || lower.startsWith('sec-');
 }
 
-function deleteHeader(headers: Record<string, string>, headerName: string): void {
-  for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() === headerName.toLowerCase()) {
-      delete headers[key];
-    }
-  }
-}
-
-function setHeaderIfMissing(headers: Record<string, string>, headerName: string, value: string): void {
-  if (!hasHeader(headers, headerName)) {
-    headers[headerName] = value;
-  }
-}
+// Status texts for 3xx codes the proxy masks behind X-Prism-Status when
+// redirect following is off.
+const REDIRECT_STATUS_TEXT: Record<number, string> = {
+  301: 'Moved Permanently',
+  302: 'Found',
+  303: 'See Other',
+  307: 'Temporary Redirect',
+  308: 'Permanent Redirect',
+};
 
 function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
   const base: Request = {
@@ -126,11 +132,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     try {
       const url = new URL(serverUrl);
       const scheme = url.protocol.replace(/:$/, '');
-      const host = url.host;
-      const path = url.pathname.replace(/^\//, '');
       const cleanSuffix = suffix.replace(/^\//, '');
-      const base = `/proxy/mcp/${scheme}/${host}/${cleanSuffix}`;
-      return path ? `${base}?path=${encodeURIComponent(path)}` : base;
+      // Pass the full server URL (path and query included) via ?server=
+      return `/proxy/mcp/${scheme}/${url.host}/${cleanSuffix}?server=${encodeURIComponent(serverUrl)}`;
     } catch {
       return '';
     }
@@ -140,9 +144,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     try {
       const url = new URL(baseUrl);
       const scheme = url.protocol.replace(/:$/, '');
-      const host = url.host;
+      // Keep any base path prefix (gateways like openrouter.ai/api need it);
+      // endpoints already include /v1, so strip a trailing /v1 from the base.
+      let basePath = url.pathname.replace(/\/+$/, '');
+      if (basePath.endsWith('/v1')) basePath = basePath.slice(0, -3);
       const cleanEndpoint = endpoint.replace(/^\//, '');
-      return `/proxy/${scheme}/${host}/${cleanEndpoint}`;
+      return `/proxy/${scheme}/${url.host}${basePath}/${cleanEndpoint}`;
     } catch {
       return '';
     }
@@ -565,7 +572,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     const grpcBody = req.grpc?.body ?? '{}';
     const body = resolveVariables(grpcBody, req.variables);
-    const headersObj: Record<string, string> = { 'Content-Type': 'application/json', ...kvToRecord(req.grpc?.metadata ?? []) };
+    const headersObj: Record<string, string> = { 'Content-Type': 'application/json' };
+    for (const kv of (req.grpc?.metadata ?? []).filter(kv => kv.enabled && kv.key)) {
+      const key = resolveVariables(kv.key, req.variables);
+      if (key.toLowerCase() === 'content-type') continue; // never valid gRPC metadata
+      headersObj[key] = resolveVariables(kv.value, req.variables);
+    }
     const proxyUrl = `/proxy/grpc/${grpcScheme}/${grpcHost}/${grpcService}/${grpcMethod}`;
 
     const startTime = performance.now();
@@ -599,7 +611,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     if (!serverUrl) throw new Error('MCP server URL is required');
 
     const startTime = performance.now();
-    const mcpHeaders = kvToRecord(req.mcp?.headers ?? []);
+    const mcpHeaders: Record<string, string> = {};
+    for (const kv of (req.mcp?.headers ?? []).filter(kv => kv.enabled && kv.key)) {
+      mcpHeaders[resolveVariables(kv.key, req.variables)] = resolveVariables(kv.value, req.variables);
+    }
     let mcpResult: McpCallToolResponse | McpReadResourceResponse | undefined;
 
     if (req.mcp?.tool) {
@@ -610,7 +625,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           args = JSON.parse(rawArgs);
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Invalid JSON';
-          throw new Error(`Invalid MCP tool arguments: ${message}`);
+          throw new Error(`Invalid MCP tool arguments: ${message}`, { cause: err });
         }
       }
 
@@ -787,20 +802,31 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }
 
   async function executeRest(req: Request): Promise<Request> {
-    const headersObj: Record<string, string> = kvToRecord(req.http?.headers ?? []);
-    const queryParams = new URLSearchParams();
+    const resolve = (text: string) => resolveVariables(text, req.variables);
+    const resolvedUrl = resolve(req.url);
     const httpMethod = req.http?.method ?? 'GET';
 
-    // Merge query params from KV pairs
-    for (const p of (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key)) {
-      queryParams.append(p.key, p.value);
-    }
+    // Ordered header list so duplicate names are preserved (like curl)
+    const headerPairs: Array<[string, string]> = (req.http?.headers ?? [])
+      .filter((h: KeyValuePair) => h.enabled && h.key)
+      .map((h: KeyValuePair) => [resolve(h.key), resolve(h.value)]);
+    const hasHeaderPair = (name: string) =>
+      headerPairs.some(([key]) => key.toLowerCase() === name.toLowerCase());
+    const addHeaderIfMissing = (name: string, value: string) => {
+      if (!hasHeaderPair(name)) headerPairs.push([name, value]);
+    };
 
-    // Merge query params from the URL itself
+    const queryParams = new URLSearchParams();
+
+    // Query params from the URL come first, then the KV panel entries
     try {
-      const typedUrl = new URL(req.url);
+      const typedUrl = new URL(resolvedUrl);
       typedUrl.searchParams.forEach((value, key) => { queryParams.append(key, value); });
     } catch { /* ignore invalid URLs */ }
+
+    for (const p of (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key)) {
+      queryParams.append(resolve(p.key), resolve(p.value));
+    }
 
     // Build body
     const httpBody = req.http?.body ?? { type: 'none' as const };
@@ -810,17 +836,23 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     switch (httpBody.type) {
       case 'json': {
-        body = resolveVariables(httpBody.content, req.variables);
+        body = resolve(httpBody.content);
         bodyForHistory = httpBody.content;
-        setHeaderIfMissing(headersObj, 'Content-Type', 'application/json');
+        addHeaderIfMissing('Content-Type', 'application/json');
+        break;
+      }
+      case 'xml': {
+        body = resolve(httpBody.content);
+        bodyForHistory = httpBody.content;
+        addHeaderIfMissing('Content-Type', 'application/xml');
         break;
       }
       case 'form-urlencoded': {
         const formParams = new URLSearchParams();
-        httpBody.data.filter(f => f.enabled && f.key).forEach(f => formParams.append(f.key, f.value));
+        httpBody.data.filter(f => f.enabled && f.key).forEach(f => formParams.append(resolve(f.key), resolve(f.value)));
         body = formParams.toString();
         bodyForHistory = formParams.toString();
-        setHeaderIfMissing(headersObj, 'Content-Type', 'application/x-www-form-urlencoded');
+        addHeaderIfMissing('Content-Type', 'application/x-www-form-urlencoded');
         break;
       }
       case 'form-data': {
@@ -831,7 +863,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
             formData.append(f.key, f.file, f.fileName);
             formDescription.push(`${f.key}: [File: ${f.fileName}]`);
           } else if (f.type === 'text') {
-            formData.append(f.key, f.value);
+            formData.append(f.key, resolve(f.value));
             formDescription.push(`${f.key}: ${f.value}`);
           }
         });
@@ -844,25 +876,23 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         if (httpBody.file) {
           body = httpBody.file;
           bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
-          setHeaderIfMissing(headersObj, 'Content-Type', (httpBody.file as File).type || 'application/octet-stream');
+          addHeaderIfMissing('Content-Type', (httpBody.file as File).type || 'application/octet-stream');
         }
         break;
       case 'raw':
-        body = httpBody.content;
+        body = resolve(httpBody.content);
         bodyForHistory = httpBody.content;
-        setHeaderIfMissing(headersObj, 'Content-Type', 'text/plain');
+        addHeaderIfMissing('Content-Type', 'text/plain');
         break;
     }
 
     // Options
     const options = req.http?.options ?? defaultHttpOptions;
-    if (options.insecure) headersObj['X-Prism-Insecure'] = 'true';
-    headersObj['X-Prism-Redirect'] = options.redirect ? 'true' : 'false';
 
     // Build proxy URL
     let targetUrl: URL;
     try {
-      targetUrl = new URL(req.url);
+      targetUrl = new URL(resolvedUrl);
     } catch {
       throw new Error('Invalid URL. Include the scheme, e.g. https://example.com');
     }
@@ -870,24 +900,53 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const queryString = queryParams.toString();
     if (queryString) proxyUrl += '?' + queryString;
 
+    const headersForHistory: Record<string, string> = {};
+    for (const [key, value] of headerPairs) {
+      headersForHistory[key] = headersForHistory[key] !== undefined ? `${headersForHistory[key]}, ${value}` : value;
+    }
+
     const clientRequest: HttpRequest = {
-      method: httpMethod, url: req.url, headers: headersObj,
+      method: httpMethod, url: req.url, headers: headersForHistory,
       query: Object.fromEntries(queryParams), body: bodyForHistory, options,
     };
 
-    const fetchHeaders: Record<string, string> = { ...headersObj };
-    if (useFormData) deleteHeader(fetchHeaders, 'Content-Type');
+    // Assemble fetch headers; names the browser refuses on fetch() are
+    // smuggled as X-Prism-Header-* and unwrapped by the proxy.
+    const fetchHeaders = new Headers();
+    for (const [key, value] of headerPairs) {
+      if (useFormData && key.toLowerCase() === 'content-type') continue; // browser sets the multipart boundary
+      try {
+        if (isForbiddenFetchHeader(key)) {
+          fetchHeaders.append(`x-prism-header-${key}`, value);
+        } else {
+          fetchHeaders.append(key, value);
+        }
+      } catch (err) {
+        throw new Error(`Invalid header "${key}"`, { cause: err });
+      }
+    }
+    if (options.insecure) fetchHeaders.set('X-Prism-Insecure', 'true');
+    fetchHeaders.set('X-Prism-Redirect', options.redirect ? 'true' : 'false');
 
     const startTime = performance.now();
     const response = await fetch(proxyUrl, {
       method: httpMethod, headers: fetchHeaders,
       body: body && httpMethod !== 'GET' && httpMethod !== 'HEAD' ? body : undefined,
     });
+    const responseBody = await response.blob();
     const duration = Math.round(performance.now() - startTime);
 
-    const responseBody = await response.blob();
+    // The proxy masks 3xx behind X-Prism-Status when redirect following is
+    // off, so the browser fetch doesn't chase Location itself.
+    const maskedStatus = Number(response.headers.get('x-prism-status')) || 0;
+    const statusCode = maskedStatus || response.status;
+    const statusText = maskedStatus ? REDIRECT_STATUS_TEXT[maskedStatus] ?? '' : response.statusText;
+
     const responseHeaders: Record<string, string> = {};
-    response.headers.forEach((value, key) => { responseHeaders[key] = value; });
+    response.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'x-prism-status') return;
+      responseHeaders[key] = value;
+    });
 
     return {
       ...req,
@@ -895,7 +954,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       http: {
         ...req.http!,
         request: clientRequest,
-        response: { status: response.statusText || String(response.status), statusCode: response.status, headers: responseHeaders, body: responseBody, duration },
+        response: { status: statusText || String(statusCode), statusCode, headers: responseHeaders, body: responseBody, duration },
       },
     };
   }
@@ -912,13 +971,21 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         case 'openai': updatedRequest = await executeOpenAI(req); break;
         default: updatedRequest = await executeRest(req); break;
       }
-      saveToHistory(updatedRequest);
       setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
+      try {
+        saveToHistory(updatedRequest);
+      } catch (saveErr) {
+        console.error('Failed to save request to history:', saveErr);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       const updatedRequest = buildErrorRequest(req, errorMessage);
-      saveToHistory(updatedRequest);
       setState(prev => ({ ...prev, request: updatedRequest, isExecuting: false }));
+      try {
+        saveToHistory(updatedRequest);
+      } catch (saveErr) {
+        console.error('Failed to save request to history:', saveErr);
+      }
     }
   };
 
