@@ -1,48 +1,42 @@
 package main
 
 import (
-	"net/http"
+	"log"
+	"os"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-
-	"github.com/adrianliechti/prism"
 	"github.com/adrianliechti/prism/pkg/config"
 	"github.com/adrianliechti/prism/pkg/server"
+
+	shell "github.com/adrianliechti/go-shell"
 )
 
 func main() {
 	cfg, err := config.New()
 
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
-	mux, err := server.New(cfg)
+	srv, err := server.New(cfg)
 
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
-	options := &options.App{
-		Title: "Prism",
+	err = shell.Run(shell.Options{
+		Title:   "Prism",
+		Handler: srv,
 
 		Width:  1200,
 		Height: 675,
 
-		AssetServer: &assetserver.Options{
-			Assets: prism.DistFS,
+		MinWidth:  640,
+		MinHeight: 400,
 
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				println("Request for:", r.URL.Path)
+		Debug: os.Getenv("PRISM_DEBUG") != "",
+	})
 
-				mux.ServeHTTP(w, r)
-			}),
-		},
-	}
-
-	if err := wails.Run(options); err != nil {
-		panic(err)
+	if err != nil {
+		log.Fatal(err)
 	}
 }

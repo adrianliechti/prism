@@ -1,8 +1,0 @@
-{
-  "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "Prism",
-  "outputfilename": "Prism",
-  "author": {
-    "name": "Adrian Liechti"
-  }
-}

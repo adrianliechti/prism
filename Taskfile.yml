@@ -3,8 +3,22 @@
 version: '3'
 
 tasks:
+  start:
+    cmds:
+      - npm run build
+      - go run ./cmd/prism
+
+  client:
+    cmds:
+      - npm run dev
+
+  server:
+    cmds:
+      - go run ./cmd/prism -server -port 9999
+
   install:
     cmds:
+      - cmd: go install ./cmd/prism
       - task: install-darwin
       - task: install-windows
 
@@ -19,43 +33,17 @@ tasks:
   install-windows:
     platforms: [windows]
     cmds:
+      # Task runs cmds through its built-in POSIX shell (mvdan/sh) even on
+      # Windows, so env vars expand as $VAR, not %VAR%.
       - task: build
-      - cmd: mkdir -p %LOCALAPPDATA%\Programs
-      - cmd: rm -f %LOCALAPPDATA%\Programs\Prism.exe
-      - cmd: mv app/build/bin/Prism.exe %LOCALAPPDATA%\Programs\
+      - cmd: mkdir -p "$LOCALAPPDATA/Programs"
+      - cmd: rm -f "$LOCALAPPDATA/Programs/Prism.exe"
+      - cmd: mv app/build/bin/Prism.exe "$LOCALAPPDATA/Programs/"
 
   build:
-    desc: Build the Wails desktop app
-    deps: [ui]
-    dir: app
+    desc: Build the desktop app for this platform (Prism.app / Prism.exe); all resources are generated from app/appicon.png
     cmds:
-      # Pinned wails CLI (keep in sync with app/go.mod / .goreleaser.app.yml).
-      - go run github.com/wailsapp/wails/v2/cmd/wails@v2.11.0 build -clean
-
-  run:app:
-    desc: Build and launch the Wails desktop app
-    deps: [ui]
-    dir: app
-    cmds:
-      - go run github.com/wailsapp/wails/v2/cmd/wails@v2.11.0 build -clean
-      - open -n "build/bin/Prism.app"
-
-  release:cli:
-    desc: Release the CLI for all platforms + Homebrew cask (needs GITHUB_TOKEN)
-    cmds:
-      # --skip=validate: the UI build hook regenerates the tracked dist/ folder, dirtying the tree.
-      - goreleaser release --clean --skip=validate -f .goreleaser.yml
-
-  release:app:
-    desc: Release the macOS desktop app + Homebrew cask (macOS only; needs GITHUB_TOKEN)
-    cmds:
-      - goreleaser release --clean --skip=validate -f .goreleaser.app.yml
-
-  release:
-    desc: Full release — CLI (all platforms) then the desktop app, on the current git tag
-    cmds:
-      - task: release:cli
-      - task: release:app
+      - go tool appbundle -name Prism -id com.adrianliechti.prism -description "Prism - API Client" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app
 
   ui:
     desc: Build the web UI assets
@@ -63,15 +51,20 @@ tasks:
       - npm install
       - npm run build
 
-  start:
+  release:app:
+    desc: Release the macOS desktop app + Homebrew cask (macOS only; needs GITHUB_TOKEN)
     cmds:
-      - npm run build
-      - go run ./cmd/prism
+      # --skip=validate: skip git-state checks so snapshot/dry runs work from a dirty tree.
+      - goreleaser release --clean --skip=validate -f .goreleaser.app.yml
 
-  client:
+  release:cli:
+    desc: Release the CLI for all platforms + Homebrew cask (needs GITHUB_TOKEN)
     cmds:
-      - npm run dev
+      # --skip=validate: the UI build hook regenerates the tracked dist/ folder, dirtying the tree.
+      - goreleaser release --clean --skip=validate -f .goreleaser.yml
 
-  server:
+  release:
+    desc: Full release — CLI (all platforms) then the desktop app, on the current git tag
     cmds:
-      - go run ./cmd/prism -server -port 9999
+      - task: release:cli
+      - task: release:app

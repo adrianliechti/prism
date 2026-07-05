@@ -26,7 +26,8 @@ TAP_OWNER="adrianliechti"
 TAP_REPO="homebrew-tap"
 CASK_NAME="prism-app"
 APP_NAME="Prism.app"
-BUNDLE_ID="com.wails.Prism"
+BUNDLE_ID="com.adrianliechti.prism"
+OLD_BUNDLE_ID="com.wails.Prism"
 REPO_URL="https://github.com/adrianliechti/prism"
 
 ARCHIVE="dist-app/${CASK_NAME}_${VERSION}_macOS_arm64.zip"
@@ -80,13 +81,17 @@ cask "${CASK_NAME}" do
                    args: ["-dr", "com.apple.quarantine", "#{appdir}/${APP_NAME}"]
   end
 
-  uninstall quit: "${BUNDLE_ID}"
+  uninstall quit: ["${BUNDLE_ID}", "${OLD_BUNDLE_ID}"]
 
   zap trash: [
     "~/Library/Caches/${BUNDLE_ID}",
     "~/Library/HTTPStorages/${BUNDLE_ID}",
     "~/Library/Saved Application State/${BUNDLE_ID}.savedState",
     "~/Library/WebKit/${BUNDLE_ID}",
+    "~/Library/Caches/${OLD_BUNDLE_ID}",
+    "~/Library/HTTPStorages/${OLD_BUNDLE_ID}",
+    "~/Library/Saved Application State/${OLD_BUNDLE_ID}.savedState",
+    "~/Library/WebKit/${OLD_BUNDLE_ID}",
   ]
 end
 EOF
