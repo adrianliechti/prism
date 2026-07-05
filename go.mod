@@ -3,7 +3,7 @@ module github.com/adrianliechti/prism
 go 1.26.0
 
 require (
-	github.com/adrianliechti/go-shell v0.0.0-20260705115937-d3a17f9b41ba
+	github.com/adrianliechti/go-shell v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
