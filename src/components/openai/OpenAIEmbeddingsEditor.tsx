@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useClient } from '../../context/useClient';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { Trash2 } from 'lucide-react';
 import type { OpenAIEmbeddingsInput } from '../../types/types';
 
@@ -63,6 +64,7 @@ export function OpenAIEmbeddingsEditor() {
               <td className="px-1.5 py-1.5">
                 <input
                   type="text"
+                  {...noAutoCorrectProps}
                   value={item.text}
                   onChange={(e) => updateInput(item.id, e.target.value)}
                   placeholder="Text to convert to embeddings..."

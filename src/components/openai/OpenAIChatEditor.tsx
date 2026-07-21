@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { useClient } from '../../context/useClient';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { Trash2, FileText, Upload, X } from 'lucide-react';
 import type { OpenAIChatInput, OpenAIChatContent } from '../../types/types';
 
@@ -114,6 +115,7 @@ export function OpenAIChatEditor() {
         return (
           <input
             type="text"
+            {...noAutoCorrectProps}
             value={content.text}
             onChange={(e) => updateContent(message.id, { type: 'text', text: e.target.value })}
             placeholder="Message content..."

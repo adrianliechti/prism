@@ -5,12 +5,16 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	// Registers google.rpc.* detail types (BadRequest, RetryInfo, ...) so
+	// status details can be decoded in grpcErrorText.
+	_ "google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -77,7 +81,11 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	methodDesc, err := findMethodDescriptor(ctx, conn, service, method)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		code := http.StatusBadRequest
+		if errors.Is(err, errGRPCReflection) {
+			code = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
 
@@ -112,7 +120,7 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 		st := status.Convert(invokeErr)
 		w.Header().Set("Grpc-Status", st.Code().String())
 		w.Header().Set("Grpc-Message", st.Message())
-		http.Error(w, fmt.Sprintf("gRPC call failed: %s: %s", st.Code(), st.Message()), httpStatusFromGRPCCode(st.Code()))
+		http.Error(w, grpcErrorText(st), httpStatusFromGRPCCode(st.Code()))
 		return
 	}
 
@@ -148,7 +156,7 @@ func invokeServerStream(ctx context.Context, w http.ResponseWriter, conn *grpc.C
 		st := status.Convert(err)
 		w.Header().Set("Grpc-Status", st.Code().String())
 		w.Header().Set("Grpc-Message", st.Message())
-		http.Error(w, fmt.Sprintf("gRPC call failed: %s: %s", st.Code(), st.Message()), httpStatusFromGRPCCode(st.Code()))
+		http.Error(w, grpcErrorText(st), httpStatusFromGRPCCode(st.Code()))
 		return
 	}
 
@@ -185,7 +193,7 @@ func invokeServerStream(ctx context.Context, w http.ResponseWriter, conn *grpc.C
 		st := status.Convert(streamErr)
 		w.Header().Set("Grpc-Status", st.Code().String())
 		w.Header().Set("Grpc-Message", st.Message())
-		http.Error(w, fmt.Sprintf("gRPC call failed: %s: %s", st.Code(), st.Message()), httpStatusFromGRPCCode(st.Code()))
+		http.Error(w, grpcErrorText(st), httpStatusFromGRPCCode(st.Code()))
 		return
 	}
 
@@ -204,6 +212,25 @@ func invokeServerStream(ctx context.Context, w http.ResponseWriter, conn *grpc.C
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(messages)
+}
+
+// grpcErrorText renders a failed call including any decodable status details
+// (e.g. google.rpc.BadRequest), which otherwise only travel as base64-encoded
+// grpc-status-details-bin trailers.
+func grpcErrorText(st *status.Status) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "gRPC call failed: %s: %s", st.Code(), st.Message())
+	for _, detail := range st.Proto().GetDetails() {
+		msg, err := detail.UnmarshalNew()
+		if err != nil {
+			fmt.Fprintf(&b, "\n%s (undecodable detail)", detail.GetTypeUrl())
+			continue
+		}
+		if raw, err := protojson.Marshal(msg); err == nil {
+			fmt.Fprintf(&b, "\n%s: %s", msg.ProtoReflect().Descriptor().FullName(), raw)
+		}
+	}
+	return b.String()
 }
 
 func writeGRPCMetadata(h http.Header, prefix string, md metadata.MD) {
@@ -302,7 +329,7 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 	services, err := reflectAllServices(ctx, conn)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to list services: %v", err), http.StatusBadGateway)
+		http.Error(w, "failed to list services: "+reflectionErrorText(err), http.StatusBadGateway)
 		return
 	}
 
@@ -321,8 +348,11 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 		for j := 0; j < methods.Len(); j++ {
 			m := methods.Get(j)
 			methodRef := MethodReflection{
-				Name:   string(m.Name()),
-				Schema: buildMessageSchema(m.Input(), map[protoreflect.FullName]bool{}),
+				Name:            string(m.Name()),
+				Schema:          buildMessageSchema(m.Input(), map[protoreflect.FullName]bool{}),
+				OutputSchema:    buildMessageSchema(m.Output(), map[protoreflect.FullName]bool{}),
+				ClientStreaming: m.IsStreamingClient(),
+				ServerStreaming: m.IsStreamingServer(),
 			}
 			svcReflection.Methods = append(svcReflection.Methods, methodRef)
 		}
@@ -337,6 +367,10 @@ func (s *Server) handleGRPCReflect(w http.ResponseWriter, r *http.Request) {
 // buildMessageSchema creates a JSON Schema-like representation of a protobuf message.
 // visited breaks recursion for self-referential types (e.g. tree nodes).
 func buildMessageSchema(msg protoreflect.MessageDescriptor, visited map[protoreflect.FullName]bool) map[string]interface{} {
+	if wkt := wellKnownSchema(msg.FullName()); wkt != nil {
+		return wkt
+	}
+
 	schema := map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
@@ -379,6 +413,48 @@ func buildFieldSchema(field protoreflect.FieldDescriptor, visited map[protorefle
 	return buildScalarSchema(field, visited)
 }
 
+// wellKnownSchema returns the protojson wire shape for well-known types,
+// which differs from their message structure: e.g. google.protobuf.Timestamp
+// is an RFC 3339 string on the wire, not {seconds, nanos}. Returns nil for
+// ordinary messages. Defaults are picked so generated examples unmarshal.
+func wellKnownSchema(name protoreflect.FullName) map[string]interface{} {
+	switch name {
+	case "google.protobuf.Timestamp":
+		return map[string]interface{}{"type": "string", "format": "date-time", "default": "1970-01-01T00:00:00Z"}
+	case "google.protobuf.Duration":
+		return map[string]interface{}{"type": "string", "description": "duration in seconds, e.g. \"1.5s\"", "default": "0s"}
+	case "google.protobuf.FieldMask":
+		return map[string]interface{}{"type": "string", "description": "comma-separated field paths"}
+	case "google.protobuf.Struct":
+		return map[string]interface{}{"type": "object", "description": "arbitrary JSON object"}
+	case "google.protobuf.Value":
+		return map[string]interface{}{"description": "any JSON value"}
+	case "google.protobuf.ListValue":
+		return map[string]interface{}{"type": "array", "description": "arbitrary JSON array"}
+	case "google.protobuf.Any":
+		return map[string]interface{}{"type": "object", "description": `{"@type": "type.googleapis.com/full.TypeName", ...fields}`}
+	case "google.protobuf.BoolValue":
+		return map[string]interface{}{"type": "boolean"}
+	case "google.protobuf.StringValue":
+		return map[string]interface{}{"type": "string"}
+	case "google.protobuf.BytesValue":
+		return map[string]interface{}{"type": "string", "format": "byte"}
+	case "google.protobuf.Int32Value":
+		return map[string]interface{}{"type": "integer", "format": "int32"}
+	case "google.protobuf.UInt32Value":
+		return map[string]interface{}{"type": "integer", "format": "uint32"}
+	case "google.protobuf.Int64Value":
+		return map[string]interface{}{"type": "integer", "format": "int64"}
+	case "google.protobuf.UInt64Value":
+		return map[string]interface{}{"type": "integer", "format": "uint64"}
+	case "google.protobuf.FloatValue":
+		return map[string]interface{}{"type": "number", "format": "float"}
+	case "google.protobuf.DoubleValue":
+		return map[string]interface{}{"type": "number", "format": "double"}
+	}
+	return nil
+}
+
 func buildScalarSchema(field protoreflect.FieldDescriptor, visited map[protoreflect.FullName]bool) map[string]interface{} {
 	schema := map[string]interface{}{}
 
@@ -409,6 +485,10 @@ func buildScalarSchema(field protoreflect.FieldDescriptor, visited map[protorefl
 		schema["type"] = "string"
 		schema["format"] = "byte"
 	case protoreflect.EnumKind:
+		if field.Enum().FullName() == "google.protobuf.NullValue" {
+			schema["type"] = "null"
+			return schema
+		}
 		schema["type"] = "string"
 		enumValues := field.Enum().Values()
 		values := make([]string, enumValues.Len())
@@ -575,10 +655,23 @@ func fileByFilename(c reflectionClient, name string) ([][]byte, error) {
 	})
 }
 
+// errGRPCReflection marks failures of the reflection protocol itself, as
+// opposed to a symbol genuinely not existing on the server.
+var errGRPCReflection = errors.New("reflection failed")
+
+// reflectionErrorText clarifies the common no-reflection case.
+func reflectionErrorText(err error) string {
+	if status.Code(err) == codes.Unimplemented {
+		return "server does not support the gRPC reflection API"
+	}
+	return err.Error()
+}
+
 // collectFiles fetches the descriptor files covering the given symbols plus
 // their transitive imports, backfilling deps the server omits from the local
-// well-known-type registry.
-func collectFiles(c reflectionClient, symbols []string) map[string]*descriptorpb.FileDescriptorProto {
+// well-known-type registry. An error is returned only when nothing could be
+// fetched at all (e.g. the server has no reflection service).
+func collectFiles(c reflectionClient, symbols []string) (map[string]*descriptorpb.FileDescriptorProto, error) {
 	fdProtos := map[string]*descriptorpb.FileDescriptorProto{}
 
 	addFiles := func(raw [][]byte) {
@@ -593,9 +686,13 @@ func collectFiles(c reflectionClient, symbols []string) map[string]*descriptorpb
 		}
 	}
 
+	var firstErr error
 	for _, symbol := range symbols {
 		raw, err := fileContainingSymbol(c, symbol)
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		addFiles(raw)
@@ -633,7 +730,10 @@ func collectFiles(c reflectionClient, symbols []string) map[string]*descriptorpb
 		}
 	}
 
-	return fdProtos
+	if len(fdProtos) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return fdProtos, nil
 }
 
 // buildRegistry registers files in dependency order, skipping any file whose
@@ -703,7 +803,13 @@ func reflectAllServices(ctx context.Context, conn *grpc.ClientConn) ([]protorefl
 		symbols = append(symbols, name)
 	}
 
-	files := buildRegistry(collectFiles(client, symbols))
+	fdProtos, err := collectFiles(client, symbols)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch descriptors: %s", reflectionErrorText(err))
+	}
+
+	files := buildRegistry(fdProtos)
 
 	var services []protoreflect.ServiceDescriptor
 	for _, symbol := range symbols {
@@ -724,7 +830,13 @@ func reflectAllServices(ctx context.Context, conn *grpc.ClientConn) ([]protorefl
 func findMethodDescriptor(ctx context.Context, conn *grpc.ClientConn, service, method string) (protoreflect.MethodDescriptor, error) {
 	client := &autoReflectionClient{ctx: ctx, conn: conn}
 
-	files := buildRegistry(collectFiles(client, []string{service}))
+	fdProtos, err := collectFiles(client, []string{service})
+
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", errGRPCReflection, reflectionErrorText(err))
+	}
+
+	files := buildRegistry(fdProtos)
 
 	desc, err := files.FindDescriptorByName(protoreflect.FullName(service))
 

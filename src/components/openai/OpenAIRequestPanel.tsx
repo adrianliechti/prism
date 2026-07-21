@@ -98,6 +98,7 @@ export function OpenAIRequestPanel() {
               value={imagePrompt}
               onChange={(e) => setOpenAIImagePrompt(e.target.value)}
               placeholder="Describe the image..."
+              autoCorrect="off"
               rows={4}
               className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
             />
@@ -110,6 +111,7 @@ export function OpenAIRequestPanel() {
             value={audioText}
             onChange={(e) => setOpenAIAudioText(e.target.value)}
             placeholder="Enter text to convert to speech..."
+            autoCorrect="off"
             rows={4}
             className="w-full px-3 py-2 text-sm bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-none text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600"
           />

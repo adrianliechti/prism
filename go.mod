@@ -3,9 +3,10 @@ module github.com/adrianliechti/prism
 go 1.26.0
 
 require (
-	github.com/adrianliechti/go-shell v0.1.0
+	github.com/adrianliechti/go-shell v0.1.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	google.golang.org/grpc v1.82.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -23,7 +24,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 )
 
 tool github.com/adrianliechti/go-shell/cmd/appbundle

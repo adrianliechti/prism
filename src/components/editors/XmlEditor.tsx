@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { File, Clock, Hash, Shuffle, Sparkles, Check, Eye } from 'lucide-react';
 import type { Variable, VariableType } from '../../types/types';
 import { resolveVariables } from '../../utils/variables';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { useEditor } from './useEditor';
 
 interface XmlEditorProps {
@@ -323,6 +324,7 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
+            {...noAutoCorrectProps}
             onInput={handleInput}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
@@ -376,9 +378,10 @@ export function XmlEditor({ value, onChange, variables, onVariablesChange, place
           <div className="absolute z-50 bg-zinc-800/95 border border-zinc-700/50 rounded shadow-lg p-1.5 w-44" style={{ top: activePopover.top, left: activePopover.left }}>
             {type === 'base64' ? (
               <div className="flex gap-1">
-                <input 
+                <input
                   type="text"
-                  value={popoverInput} 
+                  {...noAutoCorrectProps}
+                  value={popoverInput}
                   onChange={(e) => setPopoverInput(e.target.value)} 
                   onKeyDown={(e) => e.key === 'Enter' && handleSavePopover()}
                   placeholder="Text to encode..." 

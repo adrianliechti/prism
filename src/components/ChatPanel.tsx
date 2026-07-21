@@ -98,11 +98,10 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
 
-    return stream((messages) => 
+    return stream((messages) =>
       chat({
         adapter,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        messages: messages as any,
+        messages,
         tools,
         systemPrompts: [instructions],
         agentLoopStrategy: maxIterations(10),
@@ -251,6 +250,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={adapterConfig.placeholder}
+            autoCorrect="off"
             rows={1}
             disabled={isLoading}
             className="flex-1 px-3 py-2 bg-neutral-50 border border-neutral-200 dark:bg-neutral-800 dark:border-neutral-700 rounded-lg text-neutral-900 dark:text-neutral-100 text-sm placeholder-neutral-400 resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 disabled:opacity-50"

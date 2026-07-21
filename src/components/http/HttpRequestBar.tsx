@@ -1,4 +1,5 @@
 import { useClient } from '../../context/useClient';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import type { HttpMethod } from '../../types/types';
 
 const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'];
@@ -34,6 +35,7 @@ export function HttpRequestBar() {
       </select>
       <input
         type="text"
+        {...noAutoCorrectProps}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="Enter request URL"

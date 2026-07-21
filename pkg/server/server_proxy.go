@@ -33,6 +33,19 @@ func (t *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return client.Do(clientReq)
 }
 
+// rawProxyPath returns the still-encoded target path from the incoming
+// escaped request path, stripping the fixed /proxy/{scheme}/{host}/ prefix.
+// Splitting on "/" preserves encoded separators (%2F) inside the remaining
+// segments, which PathValue would otherwise have decoded away. ok is false
+// when the path has fewer segments than the route guarantees.
+func rawProxyPath(escapedPath string) (string, bool) {
+	segments := strings.Split(strings.TrimPrefix(escapedPath, "/"), "/")
+	if len(segments) < 3 {
+		return "", false
+	}
+	return "/" + strings.Join(segments[3:], "/"), true
+}
+
 // setCORSHeaders makes proxy responses readable when the UI runs on a
 // different origin than this server.
 func setCORSHeaders(h http.Header) {
@@ -62,9 +75,17 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fix the request URL to the correct path
+	// Point the request at the target path. PathValue decodes the wildcard, so
+	// derive RawPath from the still-encoded suffix (captured before Path is
+	// overwritten) to keep percent-encoding intact — e.g. %2F must not collapse
+	// into a path separator for the upstream.
+	rawSuffix, ok := rawProxyPath(r.URL.EscapedPath())
 	r.URL.Path = "/" + path
-	r.URL.RawPath = ""
+	if ok && rawSuffix != r.URL.Path {
+		r.URL.RawPath = rawSuffix
+	} else {
+		r.URL.RawPath = ""
+	}
 
 	// Redirect handling is opt-in via X-Prism-Redirect ("true" = follow
 	// server-side, "false" = surface the 3xx). Consumers that don't send the

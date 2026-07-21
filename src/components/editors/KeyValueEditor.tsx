@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { KeyValuePair } from '../../types/types';
 import { Trash2, Circle, CheckCircle2 } from 'lucide-react';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 
 interface KeyValueEditorProps {
   items: KeyValuePair[];
@@ -85,6 +86,7 @@ export function KeyValueEditor({
                 <div className="relative">
                   <input
                     type="text"
+                    {...noAutoCorrectProps}
                     value={item.key}
                     onChange={(e) => {
                       updateItem(item.id, 'key', e.target.value);
@@ -130,6 +132,7 @@ export function KeyValueEditor({
               <td className="px-1.5 py-1.5">
                 <input
                   type="text"
+                  {...noAutoCorrectProps}
                   value={item.value}
                   onChange={(e) => updateItem(item.id, 'value', e.target.value)}
                   placeholder={valuePlaceholder}

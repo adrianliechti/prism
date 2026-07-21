@@ -2,6 +2,8 @@ export function buildSchemaExample(schema: unknown): unknown {
   if (!schema || typeof schema !== 'object') return {};
   const s = schema as Record<string, unknown>;
 
+  if (s.default !== undefined) return s.default;
+
   const resolvedType = Array.isArray(s.type) ? s.type[0] : s.type;
   const type = resolvedType || (s.properties ? 'object' : s.items ? 'array' : undefined);
 
@@ -28,6 +30,8 @@ export function buildSchemaExample(schema: unknown): unknown {
       return 0;
     case 'boolean':
       return true;
+    case 'null':
+      return null;
     case 'string':
       return s.format === 'byte' ? '' : 'string';
     default:

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useClient } from '../../context/useClient';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { ChevronDown, Wrench, FileText } from 'lucide-react';
 import { McpFeatureBrowser } from '../McpFeatureBrowser';
 
@@ -42,6 +43,7 @@ export function McpRequestBar() {
     <div className="flex items-center flex-1 min-w-0">
       <input
         type="text"
+        {...noAutoCorrectProps}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="MCP server URL"

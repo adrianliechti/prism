@@ -41,14 +41,18 @@ function formatRequestForAI(request: Request): Record<string, unknown> {
 function formatMcpContent(result: McpCallToolResponse | McpReadResourceResponse): string {
   if ('content' in result) {
     // McpCallToolResponse
-    return result.content.map(c => {
+    const parts = (result.content ?? []).map(c => {
       if (c.type === 'text') return c.text || '';
       if (c.type === 'image') return `[Image: ${c.mimeType}]`;
       if (c.type === 'audio') return `[Audio: ${c.mimeType}]`;
       if (c.type === 'resource') return `[Resource: ${c.resource?.uri}]`;
       if (c.type === 'resource_link') return `[Resource Link: ${c.uri}]`;
       return '[Unknown content]';
-    }).join('\n');
+    });
+    if (result.structuredContent !== undefined) {
+      parts.push(`[Structured]: ${JSON.stringify(result.structuredContent)}`);
+    }
+    return parts.join('\n');
   } else if ('contents' in result) {
     // McpReadResourceResponse
     return result.contents.map(c => {
@@ -97,7 +101,7 @@ const getResponseDef = toolDefinition({
 
 const setUrlDef = toolDefinition({
   name: 'set_url',
-  description: 'Set the MCP server URL (e.g., http://localhost:3000/mcp or sse://localhost:3000/sse)',
+  description: 'Set the MCP server URL (e.g., http://localhost:3000/mcp)',
   inputSchema: setUrlSchema,
 });
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useClient } from '../../context/useClient';
 import { buildOpenAIProxyPath } from '../../lib/proxy';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { ChevronDown, Cpu, RefreshCw, Key } from 'lucide-react';
 
 export function OpenAIRequestBar() {
@@ -107,6 +108,7 @@ export function OpenAIRequestBar() {
     <div className="flex items-center flex-1 min-w-0">
       <input
         type="text"
+        {...noAutoCorrectProps}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="OpenAI base URL"

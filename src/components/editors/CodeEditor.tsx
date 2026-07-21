@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 
 interface CodeEditorProps {
   value: string;
@@ -29,7 +30,7 @@ export function CodeEditor({ value, onChange, placeholder }: CodeEditorProps) {
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      spellCheck={false}
+      {...noAutoCorrectProps}
       rows={3}
       className="w-full font-mono text-xs text-neutral-800 dark:text-neutral-100 bg-transparent focus:outline-none placeholder-neutral-400 dark:placeholder-neutral-600 resize-none overflow-auto"
     />

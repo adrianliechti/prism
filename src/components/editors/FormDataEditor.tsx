@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { FormDataField } from '../../types/types';
 import { Trash2, Circle, CheckCircle2, Paperclip, X } from 'lucide-react';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 
 interface FormDataEditorProps {
   items: FormDataField[];
@@ -98,6 +99,7 @@ export function FormDataEditor({
               <td className="px-1.5 py-1.5 w-36">
                 <input
                   type="text"
+                  {...noAutoCorrectProps}
                   value={item.key}
                   onChange={(e) => updateItem(item.id, { key: e.target.value })}
                   placeholder={keyPlaceholder}
@@ -127,6 +129,7 @@ export function FormDataEditor({
                 ) : (
                   <input
                     type="text"
+                    {...noAutoCorrectProps}
                     value={item.value}
                     onChange={(e) => updateItem(item.id, { value: e.target.value, type: 'text' })}
                     placeholder={valuePlaceholder}

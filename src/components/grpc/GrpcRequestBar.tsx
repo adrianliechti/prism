@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { useClient } from '../../context/useClient';
+import { noAutoCorrectProps } from '../../utils/inputProps';
 import { ChevronDown, Loader2, Box, Zap } from 'lucide-react';
 
 interface MethodReflection {
   name: string;
   schema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  clientStreaming?: boolean;
+  serverStreaming?: boolean;
 }
 
 interface ServiceReflection {
@@ -16,6 +20,13 @@ interface GrpcReflectResponse {
   services: ServiceReflection[];
 }
 
+interface SelectorOption {
+  value: string;
+  badge?: string;
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
 // Cache for reflection data
 let reflectionCache: { key: string; data: GrpcReflectResponse } | null = null;
 
@@ -25,10 +36,20 @@ async function fetchReflection(scheme: string, host: string): Promise<GrpcReflec
     return reflectionCache.data;
   }
   const response = await fetch(`/proxy/grpc/${scheme}/${host}`);
-  if (!response.ok) throw new Error('Failed to fetch services');
+  if (!response.ok) {
+    const text = (await response.text()).trim();
+    throw new Error(text || 'Failed to fetch services');
+  }
   const data: GrpcReflectResponse = await response.json();
   reflectionCache = { key, data };
   return data;
+}
+
+function methodBadge(method: MethodReflection): string | undefined {
+  if (method.clientStreaming && method.serverStreaming) return 'bidi streaming';
+  if (method.clientStreaming) return 'client streaming';
+  if (method.serverStreaming) return 'server streaming';
+  return undefined;
 }
 
 function GrpcSelector({
@@ -44,12 +65,12 @@ function GrpcSelector({
   onChange: (value: string) => void;
   placeholder: string;
   label: string;
-  fetchOptions: () => Promise<string[]>;
+  fetchOptions: () => Promise<SelectorOption[]>;
   disabled?: boolean;
   icon?: React.ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [options, setOptions] = useState<string[]>([]);
+  const [options, setOptions] = useState<SelectorOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -118,19 +139,28 @@ function GrpcSelector({
             )}
             {!isLoading && !error && options.map((opt) => (
               <button
-                key={opt}
+                key={opt.value}
                 type="button"
+                disabled={opt.disabled}
+                title={opt.disabled ? opt.disabledReason : undefined}
                 onClick={() => {
-                  onChange(opt);
+                  onChange(opt.value);
                   setIsOpen(false);
                 }}
-                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors ${
-                  opt === value
-                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
-                    : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-white/5'
+                className={`w-full px-3 py-2 text-left text-sm rounded-md transition-colors flex items-center gap-2 ${
+                  opt.disabled
+                    ? 'text-neutral-400 dark:text-neutral-600 cursor-not-allowed'
+                    : opt.value === value
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
+                      : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-white/5'
                 }`}
               >
-                {opt}
+                <span className="truncate">{opt.value}</span>
+                {opt.badge && (
+                  <span className="ml-auto px-1.5 py-px text-[10px] rounded-full bg-neutral-100 dark:bg-white/10 text-neutral-500 dark:text-neutral-400 shrink-0">
+                    {opt.badge}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -189,18 +219,24 @@ export function GrpcRequestBar() {
   };
 
   // Fetch services for current host
-  const fetchServices = async (): Promise<string[]> => {
+  const fetchServices = async (): Promise<SelectorOption[]> => {
     if (!grpcHost) return [];
     const data = await fetchReflection(grpcScheme, grpcHost);
-    return data.services.map(s => s.name);
+    return data.services.map(s => ({ value: s.name }));
   };
 
-  // Fetch methods for current service
-  const fetchMethods = async (): Promise<string[]> => {
+  // Fetch methods for current service. Client/bidi streaming methods are
+  // listed but not selectable since the proxy cannot invoke them.
+  const fetchMethods = async (): Promise<SelectorOption[]> => {
     if (!grpcHost || !grpcService) return [];
     const data = await fetchReflection(grpcScheme, grpcHost);
     const service = data.services.find(s => s.name === grpcService);
-    return service?.methods.map(m => m.name) ?? [];
+    return service?.methods.map(m => ({
+      value: m.name,
+      badge: methodBadge(m),
+      disabled: m.clientStreaming === true,
+      disabledReason: 'client/bidirectional streaming is not supported',
+    })) ?? [];
   };
 
   // Calculate input width based on content
@@ -211,6 +247,7 @@ export function GrpcRequestBar() {
       {/* Host input */}
       <input
         type="text"
+        {...noAutoCorrectProps}
         value={grpcHost}
         onChange={(e) => setGrpcHost(e.target.value)}
         placeholder="host:port"
