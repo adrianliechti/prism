@@ -10,9 +10,26 @@ interface FeatureItemProps {
   onSelect: () => void;
 }
 
+// Annotation hints are display-only; the spec says clients must treat them as
+// untrusted, so they are never used to gate behavior.
+function annotationHints(feature: McpFeature): string[] {
+  const annotations = feature.annotations;
+  if (!annotations) return [];
+  const hints: string[] = [];
+  if (annotations.readOnlyHint) hints.push('read-only');
+  if (annotations.destructiveHint) hints.push('destructive');
+  if (annotations.idempotentHint) hints.push('idempotent');
+  if (annotations.openWorldHint) hints.push('open-world');
+  return hints;
+}
+
 function FeatureItem({ feature, type, isSelected, onSelect }: FeatureItemProps) {
   const [expanded, setExpanded] = useState(false);
-  const hasSchema = feature.schema && Object.keys(feature.schema).length > 0;
+  const hasInputSchema = feature.schema && Object.keys(feature.schema).length > 0;
+  const hasDetails = hasInputSchema || feature.outputSchema;
+  // Spec display precedence: title, then annotations.title, then name
+  const displayName = feature.title || feature.annotations?.title || feature.name;
+  const hints = annotationHints(feature);
 
   return (
     <div className={`border rounded-md ${isSelected ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-neutral-200 dark:border-white/10'}`}>
@@ -26,14 +43,21 @@ function FeatureItem({ feature, type, isSelected, onSelect }: FeatureItemProps) 
           <FileText className="w-4 h-4 text-blue-500 shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate">{feature.name}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="font-medium text-sm truncate" title={feature.name}>{displayName}</span>
+            {hints.map((hint) => (
+              <span key={hint} className="px-1.5 py-px text-[10px] rounded-full bg-neutral-100 dark:bg-white/10 text-neutral-500 dark:text-neutral-400 shrink-0">
+                {hint}
+              </span>
+            ))}
+          </div>
           {feature.description && (
             <div className="text-xs text-neutral-500 dark:text-neutral-400 truncate">
               {feature.description}
             </div>
           )}
         </div>
-        {hasSchema && (
+        {hasDetails && (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -49,11 +73,24 @@ function FeatureItem({ feature, type, isSelected, onSelect }: FeatureItemProps) 
           </button>
         )}
       </div>
-      {expanded && hasSchema && (
+      {expanded && hasDetails && (
         <div className="px-3 pb-2 border-t border-neutral-200 dark:border-white/10">
-          <pre className="text-xs bg-neutral-100 dark:bg-black/20 p-2 rounded mt-2 overflow-auto max-h-48">
-            {JSON.stringify(feature.schema, null, 2)}
-          </pre>
+          {hasInputSchema && (
+            <>
+              <div className="text-[10px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500 mt-2">Input schema</div>
+              <pre className="text-xs bg-neutral-100 dark:bg-black/20 p-2 rounded mt-1 overflow-auto max-h-48">
+                {JSON.stringify(feature.schema, null, 2)}
+              </pre>
+            </>
+          )}
+          {feature.outputSchema && (
+            <>
+              <div className="text-[10px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500 mt-2">Output schema</div>
+              <pre className="text-xs bg-neutral-100 dark:bg-black/20 p-2 rounded mt-1 overflow-auto max-h-48">
+                {JSON.stringify(feature.outputSchema, null, 2)}
+              </pre>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -71,12 +108,13 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
   const resources = features?.resources || [];
   const normalizedFilter = filter.trim().toLowerCase();
   const filteredTools = normalizedFilter
-    ? tools.filter((tool) => `${tool.name} ${tool.description ?? ''}`.toLowerCase().includes(normalizedFilter))
+    ? tools.filter((tool) => `${tool.name} ${tool.title ?? ''} ${tool.description ?? ''}`.toLowerCase().includes(normalizedFilter))
     : tools;
   const filteredResources = normalizedFilter
-    ? resources.filter((resource) => `${resource.name} ${resource.uri ?? ''} ${resource.description ?? ''}`.toLowerCase().includes(normalizedFilter))
+    ? resources.filter((resource) => `${resource.name} ${resource.title ?? ''} ${resource.uri ?? ''} ${resource.description ?? ''}`.toLowerCase().includes(normalizedFilter))
     : resources;
   const error = features?.error;
+  const hasFeatures = tools.length > 0 || resources.length > 0;
 
   const handleDiscover = async () => {
     setIsDiscovering(true);
@@ -108,7 +146,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
     );
   }
 
-  if (error) {
+  if (error && !hasFeatures) {
     return (
       <div className="p-4 text-center">
         <p className="text-sm text-red-500 dark:text-red-400 mb-4">
@@ -162,6 +200,11 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
+      {error && (
+        <div className="px-3 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/40 shrink-0">
+          {error}
+        </div>
+      )}
       <div className="p-2 border-b border-neutral-200 dark:border-white/10 shrink-0">
         <div className="flex items-center gap-2 px-2 py-1.5 bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-md">
           <Search className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
@@ -208,7 +251,7 @@ export function McpFeatureBrowser({ onSelected }: { onSelected?: () => void }) {
             ) : (
               filteredResources.map((resource: McpFeature) => (
                 <FeatureItem
-                  key={resource.name}
+                  key={resource.uri ?? resource.name}
                   feature={resource}
                   type="resource"
                   isSelected={request.mcp?.resource?.uri === resource.uri}

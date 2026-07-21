@@ -51,8 +51,15 @@ func requireLocalHost(next http.Handler) http.Handler {
 func New(cfg *config.Config) (*Server, error) {
 	mux := http.NewServeMux()
 
+	// requireLocalHost stops DNS rebinding (wrong Host); CrossOriginProtection
+	// stops cross-site POSTs a web page can send straight to localhost, which
+	// would otherwise reach the proxy endpoints and invoke MCP tools or spend
+	// the OpenAI key. Same-origin UI requests (browser and app shell) pass via
+	// Sec-Fetch-Site; header-less non-browser clients remain allowed.
+	csrf := http.NewCrossOriginProtection()
+
 	s := &Server{
-		Handler: requireLocalHost(mux),
+		Handler: requireLocalHost(csrf.Handler(mux)),
 	}
 
 	mux.HandleFunc("/proxy/grpc/{scheme}/{host}/{path...}", s.handleGRPC)

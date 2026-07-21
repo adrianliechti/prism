@@ -248,6 +248,35 @@ function ContentCard({ content, index, isError }: { content: McpContent; index: 
   );
 }
 
+// Card for the structured result of a tool call (spec: structuredContent)
+function StructuredContentCard({ value }: { value: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="border border-neutral-200 dark:border-white/10 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-neutral-50 dark:bg-white/5 hover:bg-neutral-100 dark:hover:bg-white/10 transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-4 h-4 text-neutral-400" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-neutral-400" />
+        )}
+        <TypeBadge type="structured" />
+        <span className="text-xs text-neutral-500 dark:text-neutral-400 font-mono">
+          structuredContent
+        </span>
+      </button>
+      {expanded && (
+        <div className="p-3 bg-white dark:bg-transparent">
+          <HighlightedText text={JSON.stringify(value, null, 2)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Resource content card for resource responses
 function ResourceContentCard({ content, index }: { content: McpResourceContent; index: number }) {
   const [expanded, setExpanded] = useState(true);
@@ -321,8 +350,10 @@ function ResourceContentCard({ content, index }: { content: McpResourceContent; 
 export function McpResultViewer({ toolResponse, resourceResponse }: McpResultViewerProps) {
   if (toolResponse) {
     const hasError = toolResponse.isError;
-    const contentCount = toolResponse.content.length;
-    
+    const content = toolResponse.content ?? [];
+    const structuredContent = toolResponse.structuredContent;
+    const contentCount = content.length;
+
     return (
       <div className="space-y-2">
         {hasError && (
@@ -340,10 +371,13 @@ export function McpResultViewer({ toolResponse, resourceResponse }: McpResultVie
             </span>
           </div>
         )}
-        {toolResponse.content.map((content, index) => (
-          <ContentCard key={index} content={content} index={index} isError={hasError} />
+        {content.map((item, index) => (
+          <ContentCard key={index} content={item} index={index} isError={hasError} />
         ))}
-        {contentCount === 0 && (
+        {structuredContent !== undefined && (
+          <StructuredContentCard value={structuredContent} />
+        )}
+        {contentCount === 0 && structuredContent === undefined && (
           <div className="text-sm text-neutral-500 dark:text-neutral-400 text-center py-4">
             No content returned
           </div>

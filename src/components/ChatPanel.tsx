@@ -98,11 +98,10 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
 
-    return stream((messages) => 
+    return stream((messages) =>
       chat({
         adapter,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        messages: messages as any,
+        messages,
         tools,
         systemPrompts: [instructions],
         agentLoopStrategy: maxIterations(10),

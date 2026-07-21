@@ -27,11 +27,14 @@ type MethodReflection struct {
 // MCP types
 
 type McpFeature struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Schema      json.RawMessage `json:"schema,omitempty"`
-	URI         string          `json:"uri,omitempty"`
-	MimeType    string          `json:"mimeType,omitempty"`
+	Name         string          `json:"name"`
+	Title        string          `json:"title,omitempty"`
+	Description  string          `json:"description,omitempty"`
+	Schema       json.RawMessage `json:"schema,omitempty"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Annotations  json.RawMessage `json:"annotations,omitempty"`
+	URI          string          `json:"uri,omitempty"`
+	MimeType     string          `json:"mimeType,omitempty"`
 }
 
 type McpListFeaturesResponse struct {

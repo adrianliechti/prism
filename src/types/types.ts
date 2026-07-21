@@ -5,10 +5,21 @@ export type Protocol = 'rest' | 'grpc' | 'mcp' | 'openai';
 // MCP types
 export type McpOperationType = 'discover' | 'tool' | 'resource';
 
+export interface McpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface McpFeature {
   name: string;
+  title?: string;
   description?: string;
   schema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: McpToolAnnotations;
   uri?: string;
   mimeType?: string;
 }
@@ -45,7 +56,9 @@ export interface McpContent {
 }
 
 export interface McpCallToolResponse {
-  content: McpContent[];
+  /** null when the server omitted content (e.g. structured-only results) */
+  content: McpContent[] | null;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
