@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { codeToHtml } from 'shiki';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { decodeBlobText } from '../../utils/format';
+import { useHighlighter } from './useHighlighter';
 
 interface SSEViewerProps {
   content: Blob;
@@ -13,21 +13,6 @@ interface SSEEvent {
   data: string;
   retry?: number;
   raw: string;
-}
-
-function usePrefersDarkMode() {
-  const [prefersDark, setPrefersDark] = useState(() =>
-    window.matchMedia('(prefers-color-scheme: dark)').matches
-  );
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
-
-  return prefersDark;
 }
 
 function parseSSEEvents(text: string): SSEEvent[] {
@@ -70,29 +55,15 @@ function tryParseJson(str: string): object | null {
   }
 }
 
-function EventStreamCard({ event, index, prefersDark }: { event: SSEEvent; index: number; prefersDark: boolean }) {
+function EventStreamCard({ event, index }: { event: SSEEvent; index: number }) {
   const [expanded, setExpanded] = useState(true);
-  const [highlightedData, setHighlightedData] = useState<string>('');
 
   const parsedJson = useMemo(() => tryParseJson(event.data), [event.data]);
-
-  useEffect(() => {
-    const highlight = async () => {
-      if (parsedJson) {
-        try {
-          const formatted = JSON.stringify(parsedJson, null, 2);
-          const html = await codeToHtml(formatted, {
-            lang: 'json',
-            theme: prefersDark ? 'github-dark' : 'github-light',
-          });
-          setHighlightedData(html);
-        } catch {
-          setHighlightedData(`<pre>${JSON.stringify(parsedJson, null, 2)}</pre>`);
-        }
-      }
-    };
-    highlight();
-  }, [parsedJson, prefersDark]);
+  const formattedJson = useMemo(
+    () => (parsedJson ? JSON.stringify(parsedJson, null, 2) : ''),
+    [parsedJson]
+  );
+  const highlightedData = useHighlighter(formattedJson, 'json');
 
   return (
     <div className="border border-neutral-200 dark:border-white/10 rounded-lg overflow-hidden">
@@ -145,7 +116,6 @@ function EventStreamCard({ event, index, prefersDark }: { event: SSEEvent; index
 export function EventStreamViewer({ content }: SSEViewerProps) {
   const [events, setEvents] = useState<SSEEvent[]>([]);
   const [rawText, setRawText] = useState<string>('');
-  const prefersDark = usePrefersDarkMode();
 
   useEffect(() => {
     decodeBlobText(content).then((text) => {
@@ -170,7 +140,7 @@ export function EventStreamViewer({ content }: SSEViewerProps) {
         </span>
       </div>
       {events.map((event, index) => (
-        <EventStreamCard key={index} event={event} index={index} prefersDark={prefersDark} />
+        <EventStreamCard key={index} event={event} index={index} />
       ))}
     </div>
   );

@@ -3,8 +3,7 @@ import { toolDefinition } from '@tanstack/ai';
 import { clientTools } from '@tanstack/ai-client';
 import { z } from 'zod';
 import type { Request, KeyValuePair, McpCallToolResponse, McpReadResourceResponse } from '../../types/types';
-import { generateId } from '../../lib/data';
-import { formatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, type AdapterConfig } from '../../api/toolsCommon';
+import { tryFormatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, toKeyValuePairs, type AdapterConfig } from '../../api/toolsCommon';
 
 // MCP-specific setters interface
 export interface McpSetters {
@@ -123,12 +122,6 @@ const setResourceDef = toolDefinition({
   inputSchema: setResourceSchema,
 });
 
-// Type aliases for tool inputs
-type SetUrlInput = z.infer<typeof setUrlSchema>;
-type KeyValueInput = z.infer<typeof keyValueArraySchema>;
-type SetToolInput = z.infer<typeof setToolSchema>;
-type SetResourceInput = z.infer<typeof setResourceSchema>;
-
 // Tool closures read environment.X at call time, so environment must be a stable
 // object whose fields are mutated in place when values change.
 export function createTools(environment: McpToolsEnvironment) {
@@ -141,43 +134,28 @@ export function createTools(environment: McpToolsEnvironment) {
     return response || { error: 'No response available. Execute the request first.' };
   });
 
-  const setUrl = setUrlDef.client(async (args: unknown) => {
-    const input = args as SetUrlInput;
-    environment.setters.setUrl(input.url);
-    return { success: true, url: input.url };
+  const setUrl = setUrlDef.client(async ({ url }) => {
+    environment.setters.setUrl(url);
+    return { success: true, url };
   });
 
-  const setHeaders = setHeadersDef.client(async (args: unknown) => {
-    const input = args as KeyValueInput;
-    try {
-      const headers: KeyValuePair[] = JSON.parse(input.items).map((h: { key: string; value: string; enabled?: boolean }) => ({
-        id: generateId(),
-        key: h.key,
-        value: h.value,
-        enabled: h.enabled !== false,
-      }));
-      environment.setters.setMcpHeaders(headers);
-      return { success: true, headerCount: headers.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for headers: ${e instanceof Error ? e.message : 'parse error'}` };
+  const setHeaders = setHeadersDef.client(async ({ items }) => {
+    environment.setters.setMcpHeaders(toKeyValuePairs(items));
+    return { success: true, headerCount: items.length };
+  });
+
+  const setTool = setToolDef.client(async ({ name, arguments: toolArgs }) => {
+    const formatted = toolArgs.trim() ? tryFormatJson(toolArgs) : '';
+    if (formatted === null) {
+      return { success: false, error: 'Tool arguments must be a valid JSON string' };
     }
+    environment.setters.setMcpTool({ name, arguments: formatted });
+    return { success: true, tool: name };
   });
 
-  const setTool = setToolDef.client(async (args: unknown) => {
-    const input = args as SetToolInput;
-    environment.setters.setMcpTool({
-      name: input.name,
-      arguments: formatJson(input.arguments),
-    });
-    return { success: true, tool: input.name };
-  });
-
-  const setResource = setResourceDef.client(async (args: unknown) => {
-    const input = args as SetResourceInput;
-    environment.setters.setMcpResource({
-      uri: input.uri,
-    });
-    return { success: true, resource: input.uri };
+  const setResource = setResourceDef.client(async ({ uri }) => {
+    environment.setters.setMcpResource({ uri });
+    return { success: true, resource: uri };
   });
 
   return clientTools(

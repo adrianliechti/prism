@@ -147,8 +147,7 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
         part.type === 'text' && Boolean(part.content)
       )
       .map(part => part.content)
-      .join('')
-      .replace(/^undefined/, ''); // Remove "undefined" prefix from library bug
+      .join('');
   };
 
   // Check if message is currently streaming (last assistant message while loading)

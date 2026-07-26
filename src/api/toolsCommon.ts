@@ -1,15 +1,16 @@
 // Shared utilities for protocol-specific tools
 import { z } from 'zod';
+import type { KeyValuePair } from '../types/types';
+import { generateId } from '../lib/data';
 
 export const MAX_BODY_SIZE = 10 * 1024; // 10KB
 
-// Format JSON string with pretty printing
-export function formatJson(str: string): string {
+// Pretty-print a JSON string; returns null if the string is not valid JSON
+export function tryFormatJson(str: string): string | null {
   try {
-    const parsed = JSON.parse(str);
-    return JSON.stringify(parsed, null, 2);
+    return JSON.stringify(JSON.parse(str), null, 2);
   } catch {
-    return str;
+    return null;
   }
 }
 
@@ -28,8 +29,27 @@ export const setUrlSchema = z.object({
 });
 
 export const keyValueArraySchema = z.object({
-  items: z.string().describe('JSON array of objects with "key", "value", and optional "enabled" (default true) properties. Example: [{"key": "Content-Type", "value": "application/json"}]'),
+  items: z
+    .array(
+      z.object({
+        key: z.string(),
+        value: z.string(),
+        enabled: z.boolean().optional().describe('Whether the entry is active (default: true)'),
+      }),
+    )
+    .describe('The key/value entries. Example: [{"key": "Content-Type", "value": "application/json"}]'),
 });
+
+export type KeyValueItems = z.infer<typeof keyValueArraySchema>['items'];
+
+export function toKeyValuePairs(items: KeyValueItems): KeyValuePair[] {
+  return items.map((item) => ({
+    id: generateId(),
+    key: item.key,
+    value: item.value,
+    enabled: item.enabled !== false,
+  }));
+}
 
 // Adapter config type
 export interface AdapterConfig {

@@ -149,7 +149,14 @@ const setBodyTypeSchema = z.object({
 });
 
 const setChatMessagesSchema = z.object({
-  messages: z.string().describe('JSON array of chat messages. Each message has "role" (system|user|assistant) and "content" (string). Example: [{"role": "user", "content": "Hello"}]'),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['system', 'user', 'assistant']).describe('The message role'),
+        content: z.string().describe('The message text'),
+      }),
+    )
+    .describe('The chat messages, in order. Example: [{"role": "user", "content": "Hello"}]'),
 });
 
 const setImagePromptSchema = z.object({
@@ -162,7 +169,7 @@ const setAudioSchema = z.object({
 });
 
 const setEmbeddingsInputSchema = z.object({
-  inputs: z.string().describe('JSON array of strings to embed. Example: ["Hello world", "How are you?"]'),
+  inputs: z.array(z.string()).describe('The texts to embed. Example: ["Hello world", "How are you?"]'),
 });
 
 // Tool definitions
@@ -220,15 +227,6 @@ const setEmbeddingsInputDef = toolDefinition({
   inputSchema: setEmbeddingsInputSchema,
 });
 
-// Type aliases for tool inputs
-type SetUrlInput = z.infer<typeof setUrlSchema>;
-type SetModelInput = z.infer<typeof setModelSchema>;
-type SetBodyTypeInput = z.infer<typeof setBodyTypeSchema>;
-type SetChatMessagesInput = z.infer<typeof setChatMessagesSchema>;
-type SetImagePromptInput = z.infer<typeof setImagePromptSchema>;
-type SetAudioInput = z.infer<typeof setAudioSchema>;
-type SetEmbeddingsInputInput = z.infer<typeof setEmbeddingsInputSchema>;
-
 // Tool closures read environment.X at call time, so environment must be a stable
 // object whose fields are mutated in place when values change.
 export function createTools(environment: OpenAIToolsEnvironment) {
@@ -241,67 +239,50 @@ export function createTools(environment: OpenAIToolsEnvironment) {
     return response || { error: 'No response available. Execute the request first.' };
   });
 
-  const setUrl = setUrlDef.client(async (args: unknown) => {
-    const input = args as SetUrlInput;
-    environment.setters.setUrl(input.url);
-    return { success: true, url: input.url };
+  const setUrl = setUrlDef.client(async ({ url }) => {
+    environment.setters.setUrl(url);
+    return { success: true, url };
   });
 
-  const setModel = setModelDef.client(async (args: unknown) => {
-    const input = args as SetModelInput;
-    environment.setters.setOpenAIModel(input.model);
-    return { success: true, model: input.model };
+  const setModel = setModelDef.client(async ({ model }) => {
+    environment.setters.setOpenAIModel(model);
+    return { success: true, model };
   });
 
-  const setBodyType = setBodyTypeDef.client(async (args: unknown) => {
-    const input = args as SetBodyTypeInput;
-    environment.setters.setOpenAIBodyType(input.bodyType);
-    return { success: true, bodyType: input.bodyType };
+  const setBodyType = setBodyTypeDef.client(async ({ bodyType }) => {
+    environment.setters.setOpenAIBodyType(bodyType);
+    return { success: true, bodyType };
   });
 
-  const setChatMessages = setChatMessagesDef.client(async (args: unknown) => {
-    const input = args as SetChatMessagesInput;
-    try {
-      const messages: OpenAIChatInput[] = JSON.parse(input.messages).map((m: { role: 'system' | 'user' | 'assistant'; content: string }) => ({
+  const setChatMessages = setChatMessagesDef.client(async ({ messages }) => {
+    environment.setters.setOpenAIChatInput(
+      messages.map((m): OpenAIChatInput => ({
         id: generateId(),
         role: m.role,
-        content: [{ type: 'text' as const, text: m.content }],
-      }));
-      environment.setters.setOpenAIChatInput(messages);
-      return { success: true, messageCount: messages.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for messages: ${e instanceof Error ? e.message : 'parse error'}` };
-    }
+        content: [{ type: 'text', text: m.content }],
+      })),
+    );
+    return { success: true, messageCount: messages.length };
   });
 
-  const setImagePrompt = setImagePromptDef.client(async (args: unknown) => {
-    const input = args as SetImagePromptInput;
-    environment.setters.setOpenAIImagePrompt(input.prompt);
+  const setImagePrompt = setImagePromptDef.client(async ({ prompt }) => {
+    environment.setters.setOpenAIImagePrompt(prompt);
     return { success: true };
   });
 
-  const setAudio = setAudioDef.client(async (args: unknown) => {
-    const input = args as SetAudioInput;
-    environment.setters.setOpenAIAudioText(input.text);
-    if (input.voice) {
-      environment.setters.setOpenAIAudioVoice(input.voice);
+  const setAudio = setAudioDef.client(async ({ text, voice }) => {
+    environment.setters.setOpenAIAudioText(text);
+    if (voice) {
+      environment.setters.setOpenAIAudioVoice(voice);
     }
-    return { success: true, voice: input.voice || 'alloy' };
+    return { success: true, ...(voice ? { voice } : {}) };
   });
 
-  const setEmbeddingsInput = setEmbeddingsInputDef.client(async (args: unknown) => {
-    const input = args as SetEmbeddingsInputInput;
-    try {
-      const texts: string[] = JSON.parse(input.inputs);
-      const embeddings: OpenAIEmbeddingsInput[] = texts.map(text => ({
-        id: generateId(),
-        text,
-      }));
-      environment.setters.setOpenAIEmbeddingsInput(embeddings);
-      return { success: true, inputCount: embeddings.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for inputs: ${e instanceof Error ? e.message : 'parse error'}` };
-    }
+  const setEmbeddingsInput = setEmbeddingsInputDef.client(async ({ inputs }) => {
+    environment.setters.setOpenAIEmbeddingsInput(
+      inputs.map((text): OpenAIEmbeddingsInput => ({ id: generateId(), text })),
+    );
+    return { success: true, inputCount: inputs.length };
   });
 
   return clientTools(

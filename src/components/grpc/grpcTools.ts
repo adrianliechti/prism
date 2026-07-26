@@ -3,8 +3,7 @@ import { toolDefinition } from '@tanstack/ai';
 import { clientTools } from '@tanstack/ai-client';
 import { z } from 'zod';
 import type { Request, KeyValuePair } from '../../types/types';
-import { generateId } from '../../lib/data';
-import { formatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, type AdapterConfig } from '../../api/toolsCommon';
+import { tryFormatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, toKeyValuePairs, type AdapterConfig } from '../../api/toolsCommon';
 
 // gRPC-specific setters interface
 export interface GrpcSetters {
@@ -78,11 +77,6 @@ const setMetadataDef = toolDefinition({
   inputSchema: keyValueArraySchema,
 });
 
-// Type aliases for tool inputs
-type SetUrlInput = z.infer<typeof setUrlSchema>;
-type SetBodyInput = z.infer<typeof setBodySchema>;
-type KeyValueInput = z.infer<typeof keyValueArraySchema>;
-
 // Tool closures read environment.X at call time, so environment must be a stable
 // object whose fields are mutated in place when values change.
 export function createTools(environment: GrpcToolsEnvironment) {
@@ -95,32 +89,23 @@ export function createTools(environment: GrpcToolsEnvironment) {
     return response || { error: 'No response available. Execute the request first.' };
   });
 
-  const setUrl = setUrlDef.client(async (args: unknown) => {
-    const input = args as SetUrlInput;
-    environment.setters.setUrl(input.url);
-    return { success: true, url: input.url };
+  const setUrl = setUrlDef.client(async ({ url }) => {
+    environment.setters.setUrl(url);
+    return { success: true, url };
   });
 
-  const setBody = setBodyDef.client(async (args: unknown) => {
-    const input = args as SetBodyInput;
-    environment.setters.setGrpcBody(formatJson(input.body));
+  const setBody = setBodyDef.client(async ({ body }) => {
+    const formatted = tryFormatJson(body);
+    if (formatted === null) {
+      return { success: false, error: 'Body must be valid JSON matching the protobuf message schema' };
+    }
+    environment.setters.setGrpcBody(formatted);
     return { success: true };
   });
 
-  const setMetadata = setMetadataDef.client(async (args: unknown) => {
-    const input = args as KeyValueInput;
-    try {
-      const metadata: KeyValuePair[] = JSON.parse(input.items).map((m: { key: string; value: string; enabled?: boolean }) => ({
-        id: generateId(),
-        key: m.key,
-        value: m.value,
-        enabled: m.enabled !== false,
-      }));
-      environment.setters.setGrpcMetadata(metadata);
-      return { success: true, metadataCount: metadata.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for metadata: ${e instanceof Error ? e.message : 'parse error'}` };
-    }
+  const setMetadata = setMetadataDef.client(async ({ items }) => {
+    environment.setters.setGrpcMetadata(toKeyValuePairs(items));
+    return { success: true, metadataCount: items.length };
   });
 
   return clientTools(

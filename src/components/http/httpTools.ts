@@ -4,7 +4,7 @@ import { clientTools } from '@tanstack/ai-client';
 import { z } from 'zod';
 import type { Request, HttpMethod, KeyValuePair, RequestBody, FormDataField } from '../../types/types';
 import { generateId } from '../../lib/data';
-import { formatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, type AdapterConfig } from '../../api/toolsCommon';
+import { tryFormatJson, truncateBody, emptySchema, setUrlSchema, keyValueArraySchema, toKeyValuePairs, type AdapterConfig } from '../../api/toolsCommon';
 
 // HTTP-specific setters interface
 export interface HttpSetters {
@@ -70,7 +70,17 @@ const setMethodSchema = z.object({
 
 const setBodySchema = z.object({
   type: z.enum(['none', 'json', 'xml', 'form-urlencoded', 'form-data', 'raw']).describe('The body type'),
-  content: z.string().optional().describe('The body content. For JSON/XML/raw, provide the content string. For form-urlencoded/form-data, provide JSON array like headers/params. Note: form-data only supports text fields (not file uploads) via this tool.'),
+  content: z.string().optional().describe('The body content for json, xml, or raw bodies'),
+  fields: z
+    .array(
+      z.object({
+        key: z.string(),
+        value: z.string(),
+        enabled: z.boolean().optional(),
+      }),
+    )
+    .optional()
+    .describe('The form fields for form-urlencoded or form-data bodies. Note: form-data only supports text fields (not file uploads) via this tool.'),
 });
 
 // Tool definitions
@@ -116,12 +126,6 @@ const setBodyDef = toolDefinition({
   inputSchema: setBodySchema,
 });
 
-// Type aliases for tool inputs
-type SetMethodInput = z.infer<typeof setMethodSchema>;
-type SetUrlInput = z.infer<typeof setUrlSchema>;
-type KeyValueInput = z.infer<typeof keyValueArraySchema>;
-type SetBodyInput = z.infer<typeof setBodySchema>;
-
 // Tool closures read environment.X at call time, so environment must be a stable
 // object whose fields are mutated in place when values change.
 export function createTools(environment: HttpToolsEnvironment) {
@@ -134,102 +138,65 @@ export function createTools(environment: HttpToolsEnvironment) {
     return response || { error: 'No response available. Execute the request first.' };
   });
 
-  const setMethod = setMethodDef.client(async (args: unknown) => {
-    const input = args as SetMethodInput;
-    environment.setters.setMethod(input.method as HttpMethod);
-    return { success: true, method: input.method };
+  const setMethod = setMethodDef.client(async ({ method }) => {
+    environment.setters.setMethod(method);
+    return { success: true, method };
   });
 
-  const setUrl = setUrlDef.client(async (args: unknown) => {
-    const input = args as SetUrlInput;
-    environment.setters.setUrl(input.url);
-    return { success: true, url: input.url };
+  const setUrl = setUrlDef.client(async ({ url }) => {
+    environment.setters.setUrl(url);
+    return { success: true, url };
   });
 
-  const setHeaders = setHeadersDef.client(async (args: unknown) => {
-    const input = args as KeyValueInput;
-    try {
-      const headers: KeyValuePair[] = JSON.parse(input.items).map((h: { key: string; value: string; enabled?: boolean }) => ({
-        id: generateId(),
-        key: h.key,
-        value: h.value,
-        enabled: h.enabled !== false,
-      }));
-      environment.setters.setHeaders(headers);
-      return { success: true, headerCount: headers.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for headers: ${e instanceof Error ? e.message : 'parse error'}` };
-    }
+  const setHeaders = setHeadersDef.client(async ({ items }) => {
+    environment.setters.setHeaders(toKeyValuePairs(items));
+    return { success: true, headerCount: items.length };
   });
 
-  const setQueryParams = setQueryParamsDef.client(async (args: unknown) => {
-    const input = args as KeyValueInput;
-    try {
-      const params: KeyValuePair[] = JSON.parse(input.items).map((p: { key: string; value: string; enabled?: boolean }) => ({
-        id: generateId(),
-        key: p.key,
-        value: p.value,
-        enabled: p.enabled !== false,
-      }));
-      environment.setters.setQuery(params);
-      return { success: true, paramCount: params.length };
-    } catch (e) {
-      return { success: false, error: `Invalid JSON for query params: ${e instanceof Error ? e.message : 'parse error'}` };
-    }
+  const setQueryParams = setQueryParamsDef.client(async ({ items }) => {
+    environment.setters.setQuery(toKeyValuePairs(items));
+    return { success: true, paramCount: items.length };
   });
 
-  const setBody = setBodyDef.client(async (args: unknown) => {
-    const input = args as SetBodyInput;
-    try {
-      let body: RequestBody;
-      switch (input.type) {
-        case 'none':
-          body = { type: 'none' };
-          break;
-        case 'json':
-          body = { type: 'json', content: formatJson(input.content || '') };
-          break;
-        case 'xml':
-          body = { type: 'xml', content: input.content || '' };
-          break;
-        case 'raw':
-          body = { type: 'raw', content: input.content || '' };
-          break;
-        case 'form-urlencoded': {
-          const data: KeyValuePair[] = input.content
-            ? JSON.parse(input.content).map((p: { key: string; value: string; enabled?: boolean }) => ({
-                id: generateId(),
-                key: p.key,
-                value: p.value,
-                enabled: p.enabled !== false,
-              }))
-            : [];
-          body = { type: 'form-urlencoded', data };
-          break;
+  const setBody = setBodyDef.client(async ({ type, content, fields }) => {
+    let body: RequestBody;
+    switch (type) {
+      case 'json': {
+        const formatted = content ? tryFormatJson(content) : '';
+        if (formatted === null) {
+          return { success: false, error: 'Body content is not valid JSON' };
         }
-        case 'form-data': {
-          const data: FormDataField[] = input.content
-            ? JSON.parse(input.content).map((f: { key: string; value?: string; enabled?: boolean }) => ({
-                id: generateId(),
-                key: f.key,
-                type: 'text' as const,
-                value: f.value || '',
-                enabled: f.enabled !== false,
-                file: null,
-                fileName: '',
-              }))
-            : [];
-          body = { type: 'form-data', data };
-          break;
-        }
-        default:
-          body = { type: 'none' };
+        body = { type: 'json', content: formatted };
+        break;
       }
-      environment.setters.setBody(body);
-      return { success: true, bodyType: input.type };
-    } catch (e) {
-      return { success: false, error: `Invalid body content: ${e instanceof Error ? e.message : 'parse error'}` };
+      case 'xml':
+        body = { type: 'xml', content: content || '' };
+        break;
+      case 'raw':
+        body = { type: 'raw', content: content || '' };
+        break;
+      case 'form-urlencoded':
+        body = { type: 'form-urlencoded', data: toKeyValuePairs(fields ?? []) };
+        break;
+      case 'form-data':
+        body = {
+          type: 'form-data',
+          data: (fields ?? []).map((f): FormDataField => ({
+            id: generateId(),
+            key: f.key,
+            type: 'text',
+            value: f.value,
+            enabled: f.enabled !== false,
+            file: null,
+            fileName: '',
+          })),
+        };
+        break;
+      default:
+        body = { type: 'none' };
     }
+    environment.setters.setBody(body);
+    return { success: true, bodyType: type };
   });
 
   return clientTools(
