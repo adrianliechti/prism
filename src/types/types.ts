@@ -127,6 +127,7 @@ export interface HttpRequest {
   options: {
     insecure: boolean;
     redirect: boolean;
+    timeout?: number; // milliseconds; 0 disables the timeout
   };
 }
 
@@ -139,6 +140,8 @@ export interface HttpResponse {
   bodyOmitted?: boolean;
   duration: number;
   error?: string;
+  streaming?: boolean;
+  interrupted?: string;
 }
 
 // Protocol-specific request data types
@@ -147,6 +150,8 @@ export interface HttpRequestData {
   query: KeyValuePair[];
   headers: KeyValuePair[];
   body: RequestBody;
+  bodyDrafts?: Partial<Record<RequestBody['type'], RequestBody>>;
+  queryInUrl?: boolean;
   options: HttpRequest['options'];
   request: HttpRequest | null;
   response: HttpResponse | null;
@@ -268,6 +273,7 @@ export interface OpenAIRequestData {
 // Request data (editable) with execution state
 export interface Request {
   id: string;
+  requestId?: string; // originating draft for an immutable history entry
   name: string;
   protocol: Protocol;
   url: string;

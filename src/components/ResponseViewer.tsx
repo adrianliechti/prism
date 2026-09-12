@@ -64,7 +64,7 @@ export function ResponseViewer() {
   const error = response?.error ?? mcpError ?? openaiError;
 
   // Loading state
-  if (isLoading) {
+  if (isLoading && !(protocol === 'rest' && httpResponse?.streaming)) {
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-50">
         <div className="relative mb-4">
@@ -180,9 +180,11 @@ export function ResponseViewer() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {httpResponse?.interrupted && <p role="status" className="mb-2 text-xs text-amber-700 dark:text-amber-300">{httpResponse.interrupted}. Received data is shown below.</p>}
       {/* Status Bar */}
       {(response || mcpResponse || openaiResponse) && (
         <div className="flex items-center gap-3 mb-3 shrink-0">
+          {httpResponse?.streaming && <span role="status" className="text-xs text-emerald-600 dark:text-emerald-400">Receiving…</span>}
           {response && (
             <>
               <StatusBadge statusCode={response.statusCode} status={response.status} />
@@ -286,7 +288,7 @@ export function ResponseViewer() {
                 {Object.entries(response.headers).map(([key, value]) => (
                   <div key={key} className="text-xs">
                     <div className="font-mono text-neutral-600 dark:text-neutral-400 mb-0.5">{key}</div>
-                    <div className="font-mono text-neutral-700 dark:text-neutral-200 break-all">{value}</div>
+                    <div className="font-mono text-neutral-700 dark:text-neutral-200 break-all whitespace-pre-wrap">{value}</div>
                   </div>
                 ))}
               </div>

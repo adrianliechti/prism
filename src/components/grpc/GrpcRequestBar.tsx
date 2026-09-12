@@ -251,6 +251,7 @@ export function GrpcRequestBar() {
         value={grpcHost}
         onChange={(e) => setGrpcHost(e.target.value)}
         placeholder="host:port"
+        data-request-address
         size={hostInputSize}
         className="min-w-20 max-w-full px-2 py-1.5 text-sm bg-transparent text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
       />

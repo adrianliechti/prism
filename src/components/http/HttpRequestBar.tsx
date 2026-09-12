@@ -21,7 +21,7 @@ export function HttpRequestBar() {
   const url = request?.url ?? '';
 
   return (
-    <div className="flex items-center gap-2 flex-1">
+    <div className="flex items-center gap-2 flex-1 min-w-0">
       <select
         value={method}
         onChange={(e) => setMethod(e.target.value as HttpMethod)}
@@ -39,7 +39,8 @@ export function HttpRequestBar() {
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="Enter request URL"
-        className="flex-1 px-3 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
+        data-request-address
+        className="flex-1 min-w-0 px-3 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
       />
     </div>
   );

@@ -118,10 +118,13 @@ export function EventStreamViewer({ content }: SSEViewerProps) {
   const [rawText, setRawText] = useState<string>('');
 
   useEffect(() => {
+    let current = true;
     decodeBlobText(content).then((text) => {
+      if (!current) return;
       setRawText(text);
       setEvents(parseSSEEvents(text));
     });
+    return () => { current = false; };
   }, [content]);
 
   if (events.length === 0) {

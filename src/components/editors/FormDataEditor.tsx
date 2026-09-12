@@ -126,6 +126,10 @@ export function FormDataEditor({
                       <X className="w-3 h-3" />
                     </button>
                   </div>
+                ) : item.type === 'file' ? (
+                  <button type="button" onClick={() => fileInputRefs.current[item.id]?.click()} className="text-xs text-amber-700 dark:text-amber-300 underline">
+                    Reattach {item.fileName || 'file'}
+                  </button>
                 ) : (
                   <input
                     type="text"

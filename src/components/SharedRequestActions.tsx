@@ -1,10 +1,12 @@
 import { useClient } from '../context/useClient';
 import { RequestBarActions } from '../context/RequestBarActions';
-import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
+import { Send, Square, Sparkles } from 'lucide-react';
+import { useEffect } from 'react';
+import { missingAttachment } from '../lib/requestUtils';
 import { getConfig } from '../config';
 
 export function SharedRequestActions() {
-  const { request, isExecuting, executeRequest, aiPanelOpen, toggleAiPanel } = useClient();
+  const { request, isExecuting, executeRequest, cancelRequest, aiPanelOpen, toggleAiPanel } = useClient();
 
   const hasAiModel = Boolean(getConfig().ai?.model);
   const isLoading = isExecuting;
@@ -71,7 +73,7 @@ export function SharedRequestActions() {
 
   // Check if we can execute
   const canExecute = protocol === 'rest'
-    ? url.length > 0
+    ? url.trim().length > 0 && !missingAttachment(request.http?.body ?? { type: 'none' })
     : protocol === 'mcp'
       ? url.length > 0 && mcpHasToolOrResource
       : protocol === 'openai'
@@ -79,22 +81,38 @@ export function SharedRequestActions() {
         : grpcHost.length > 0 && grpcService.length > 0 && grpcMethod.length > 0;
 
   const handleSubmit = () => {
-    executeRequest();
+    if (isLoading) cancelRequest();
+    else void executeRequest();
   };
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || event.isComposing || event.repeat || event.defaultPrevented) return;
+      const inAddressBar = event.target instanceof HTMLInputElement && event.target.hasAttribute('data-request-address');
+      const sendShortcut = event.metaKey || event.ctrlKey || (inAddressBar && !event.altKey && !event.shiftKey);
+      if (sendShortcut && canExecute && !isLoading) {
+        event.preventDefault();
+        void executeRequest();
+      }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [executeRequest, isLoading, canExecute]);
 
   return (
     <RequestBarActions>
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={isLoading || !canExecute}
-        className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
-        title={disabledReason}
+        disabled={!isLoading && !canExecute}
+        className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 disabled:opacity-30 disabled:cursor-not-allowed"
+        aria-label={isLoading ? 'Cancel' : 'Send'}
+        title={isLoading ? 'Cancel request' : canExecute ? 'Send request (Enter in address bar)' : disabledReason}
       >
         {isLoading ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Square className="w-4 h-4" />
         ) : (
-          <ArrowRight className="w-4 h-4" />
+          <Send className="w-4 h-4" />
         )}
       </button>
       {hasAiModel && (

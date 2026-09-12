@@ -33,7 +33,7 @@ func (s *Server) handleDataList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := filepath.Join(getDataDir(), store)
+	dir := filepath.Join(s.dataDir, store)
 
 	entries, err := os.ReadDir(dir)
 
@@ -86,9 +86,9 @@ func (s *Server) handleDataGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(getDataDir(), store, id+".json")
+	filePath := filepath.Join(s.dataDir, store, id+".json")
 
-	data, err := os.ReadFile(filePath)
+	data, err := s.readDataFile(filePath)
 
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -128,16 +128,11 @@ func (s *Server) handleDataPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := filepath.Join(getDataDir(), store)
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	dir := filepath.Join(s.dataDir, store)
 
 	filePath := filepath.Join(dir, id+".json")
 
-	if err := writeFileAtomic(filePath, body, 0644); err != nil {
+	if err := s.writeDataFile(filePath, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -185,7 +180,7 @@ func (s *Server) handleDataDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(getDataDir(), store, id+".json")
+	filePath := filepath.Join(s.dataDir, store, id+".json")
 
 	if err := os.Remove(filePath); err != nil {
 		if os.IsNotExist(err) {

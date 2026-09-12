@@ -112,6 +112,7 @@ export function OpenAIRequestBar() {
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="OpenAI base URL"
+        data-request-address
         size={urlInputSize}
         className="min-w-24 max-w-full px-2 py-1.5 bg-transparent text-neutral-800 dark:text-neutral-100 text-sm placeholder-neutral-400 dark:placeholder-neutral-600 focus:outline-none"
       />

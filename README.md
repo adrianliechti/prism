@@ -1,73 +1,47 @@
-# React + TypeScript + Vite
+# Prism
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A local API client for HTTP, gRPC, MCP, and OpenAI-compatible services, with a React interface and Go backend.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Use Go 1.26 or newer and Node.js 22.18 or newer.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run build
+go run ./cmd/prism -server
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open the local address printed by the server (normally `http://localhost:9999`). Omit `-server` to open the browser automatically. For frontend development, keep the backend running on port 9999 and run `npm run dev` in another terminal.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The desktop app can be built with `task build`; see [Taskfile.yml](Taskfile.yml) for platform packaging tasks. The tracked `dist` directory contains the frontend embedded into Go builds, so rebuild it after frontend changes.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Requests
+
+- Requests autosave independently of execution history. Name and switch between drafts in the Requests sidebar; each send creates a separate history entry.
+- Click the Send icon, press Enter in the address bar, or use Cmd/Ctrl+Enter. The button becomes Cancel while that request runs. Other drafts can run independently.
+- HTTP requests time out after 30 seconds by default. Change the timeout in the request options; `0` keeps the request open until completion or cancellation. Streaming responses appear as data arrives.
+- The URL and Params editor stay synchronized, including duplicate keys and disabled parameters. Switching body formats preserves their contents.
+- Binary and multipart attachments up to 8 MiB each are saved with the request. Larger attachments can be sent, but must be reattached after reloading. Missing attachments block sending. Following redirects requires buffering the request body, limited to 64 MiB; disable redirect following for larger bodies.
+- The backend executes the selected HTTP method, including OPTIONS and GET requests with bodies. Cookies are kept in an upstream cookie jar for the running server session, and Set-Cookie headers appear in the response inspector. Restarting the server clears the jar.
+
+## Local storage
+
+Drafts, history, and workspace selection are stored in `~/.local/share/prism`. Set `PRISM_DATA_DIR` to use another directory.
+
+Saved data, including credentials across all protocols, is encrypted with AES-256-GCM using a workspace key in `.key`. Files use owner-only permissions (`0600`) and directories use `0700` on systems supporting Unix permissions. Existing plaintext JSON is migrated when loaded. This is local file encryption; the key is stored alongside the data.
+
+Back up the entire workspace directory, including `.key`. Encrypted requests cannot be recovered without that key. Save failures appear in the interface; Retry save retries failed drafts and execution records without sending the requests again.
+
+## Checks
+
+```sh
+npm run lint
+npm test
+npm run build
+go test ./...
+npx playwright install chromium
+npm run test:browser
 ```
+
+The browser tests build the frontend and run against a temporary workspace and local upstream fixtures. They do not use personal saved requests or external API credentials.

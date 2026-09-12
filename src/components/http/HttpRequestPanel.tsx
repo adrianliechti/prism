@@ -3,6 +3,7 @@ import { useClient } from '../../context/useClient';
 import { KeyValueEditor, FormDataEditor, BinaryUploader, CodeEditor, JsonEditor, XmlEditor } from '../editors';
 import type { RequestBody, FormDataField } from '../../types/types';
 import { RotateCw, ShieldAlert } from 'lucide-react';
+import { missingAttachment } from '../../lib/requestUtils';
 
 type Tab = 'headers' | 'params' | 'body';
 type BodyType = RequestBody['type'];
@@ -82,18 +83,20 @@ export function HttpRequestPanel() {
   const variables = request?.variables ?? [];
 
   const handleBodyTypeChange = (type: BodyType) => {
+    const saved = request.http?.bodyDrafts?.[type];
+    if (saved) { setBody(saved); return; }
     switch (type) {
       case 'none':
         setBody({ type: 'none' });
         break;
       case 'json':
-        setBody({ type: 'json', content: body.type === 'json' ? body.content : '' });
+        setBody({ type: 'json', content: 'content' in body ? body.content : '' });
         break;
       case 'xml':
-        setBody({ type: 'xml', content: body.type === 'xml' ? body.content : '' });
+        setBody({ type: 'xml', content: 'content' in body ? body.content : '' });
         break;
       case 'raw':
-        setBody({ type: 'raw', content: body.type === 'raw' ? body.content : '' });
+        setBody({ type: 'raw', content: 'content' in body ? body.content : '' });
         break;
       case 'form-urlencoded':
         setBody({ type: 'form-urlencoded', data: body.type === 'form-urlencoded' ? body.data : [{ id: generateId(), enabled: true, key: '', value: '' }] });
@@ -116,12 +119,13 @@ export function HttpRequestPanel() {
   return (
     <div className="space-y-3">
       {/* Tab Headers */}
-      <div className="flex items-center gap-2">
-        <div role="tablist" className="inline-flex gap-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="tablist" aria-label="Request configuration" className="inline-flex gap-1">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               role="tab"
+              aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all ${
                 activeTab === tab.id
@@ -152,6 +156,13 @@ export function HttpRequestPanel() {
           </select>
         )}
         <div className="flex-1" />
+        <label className="flex items-center gap-1 text-[11px] text-neutral-500" title="Set to 0 for no timeout">
+          Timeout
+          <input aria-label="Request timeout in seconds" type="number" min="0" step="1" value={(options.timeout ?? 30000) / 1000}
+            onChange={e => setOptions({ timeout: Math.max(0, e.target.valueAsNumber || 0) * 1000 })}
+            className="w-14 px-1 py-1 border border-neutral-200 dark:border-white/10 rounded bg-transparent" />
+          s
+        </label>
         <button
           type="button"
           onClick={() => setOptions({ redirect: !options.redirect })}
@@ -182,6 +193,7 @@ export function HttpRequestPanel() {
 
       {/* Tab Content */}
       <div>
+        {missingAttachment(body) && <p role="alert" className="mb-3 text-xs text-amber-700 dark:text-amber-300">{missingAttachment(body)}</p>}
         {activeTab === 'params' && (
           <KeyValueEditor
             items={query}

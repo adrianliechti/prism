@@ -6,6 +6,8 @@ import (
 
 type Config struct {
 	OpenAI *OpenAIConfig
+	// DataDir overrides the local storage directory, for isolated workspaces.
+	DataDir string
 }
 
 type OpenAIConfig struct {
@@ -15,7 +17,7 @@ type OpenAIConfig struct {
 }
 
 func New() (*Config, error) {
-	cfg := &Config{}
+	cfg := &Config{DataDir: os.Getenv("PRISM_DATA_DIR")}
 
 	applyOpenAIConfig(cfg)
 

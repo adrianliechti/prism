@@ -1,6 +1,7 @@
 import { createCollection } from '@tanstack/react-db';
 import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { QueryClient } from '@tanstack/react-query';
+import { normalizeRequest } from './requestUtils.ts';
 import type {
   Request,
   RequestBody,
@@ -46,8 +47,13 @@ export type {
 
 // Shared utility for generating unique IDs
 export function generateId(): string {
-  return Math.random().toString(36).substring(2, 9);
+  return crypto.randomUUID();
 }
+
+interface SavedFile { data: string; type: string; name: string; lastModified: number }
+type SavedBody = Exclude<RequestBody, { type: 'binary' | 'form-data' }>
+  | (Extract<RequestBody, { type: 'binary' }> & { attachment?: SavedFile })
+  | { type: 'form-data'; data: Array<import('../types/types').FormDataField & { attachment?: SavedFile }> };
 
 // ============================================================================
 // Serialization Types (internal)
@@ -59,7 +65,9 @@ interface HttpSettings {
   url: string;
   query: KeyValuePair[];
   headers: KeyValuePair[];
-  body: RequestBody;
+  body: SavedBody;
+  bodyDrafts?: Partial<Record<RequestBody['type'], SavedBody>>;
+  queryInUrl?: boolean;
   options: HttpRequest['options'];
   response?: {
     status: string;
@@ -70,6 +78,7 @@ interface HttpSettings {
     bodyOmitted?: boolean;
     duration: number;
     error?: string;
+    interrupted?: string;
   };
 }
 
@@ -110,6 +119,7 @@ interface McpSettings {
 interface OpenAISettings {
   url: string;         // OpenAI API URL
   model: string;       // Selected model
+  apiKey?: string;
   chat?: {
     input: OpenAIChatInput[];
   };
@@ -136,6 +146,7 @@ interface OpenAISettings {
 
 interface SerializedRequest {
   id: string;
+  requestId?: string;
   name: string;
   variables: Variable[];
   creationTime: number;
@@ -155,17 +166,10 @@ interface SerializedRequest {
 const MAX_PERSISTED_BODY_SIZE = 2 * 1024 * 1024;
 
 async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      // Remove the data URL prefix (e.g., "data:application/json;base64,")
-      const base64 = result.split(',')[1] || '';
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += 32768) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 32768)));
+  return btoa(chunks.join(''));
 }
 
 function base64ToBlob(base64: string, type: string): Blob {
@@ -181,9 +185,37 @@ function base64ToBlob(base64: string, type: string): Blob {
 // Serialization / Deserialization
 // ============================================================================
 
-async function serializeRequest(req: Request): Promise<SerializedRequest> {
+const fileCache = new WeakMap<File, Promise<SavedFile | undefined>>();
+function saveFile(file: File | null): Promise<SavedFile | undefined> {
+  if (!file || file.size > 8 * 1024 * 1024) return Promise.resolve(undefined);
+  let saved = fileCache.get(file);
+  if (!saved) {
+    saved = blobToBase64(file).then(data => ({ data, type: file.type, name: file.name, lastModified: file.lastModified }));
+    fileCache.set(file, saved);
+  }
+  return saved;
+}
+
+async function saveBody(body: RequestBody): Promise<SavedBody> {
+  if (body.type === 'binary') return { ...body, file: null, attachment: await saveFile(body.file) };
+  if (body.type === 'form-data') return { ...body, data: await Promise.all(body.data.map(async f => ({ ...f, file: null, attachment: await saveFile(f.file) }))) };
+  return body;
+}
+
+function restoreFile(file?: SavedFile): File | null {
+  return file ? new File([base64ToBlob(file.data, file.type)], file.name, { type: file.type, lastModified: file.lastModified }) : null;
+}
+
+function restoreBody(body: SavedBody): RequestBody {
+  if (body.type === 'binary') return { type: 'binary', file: restoreFile(body.attachment), fileName: body.fileName };
+  if (body.type === 'form-data') return { type: 'form-data', data: body.data.map(f => ({ ...f, file: restoreFile((f as typeof f & { attachment?: SavedFile }).attachment) })) };
+  return body;
+}
+
+export async function serializeRequest(req: Request): Promise<SerializedRequest> {
   const base: SerializedRequest = {
     id: req.id,
+    requestId: req.requestId,
     name: req.name,
     variables: req.variables ?? [],
     creationTime: req.creationTime,
@@ -215,6 +247,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
       base.openai = {
         url: req.url,
         model: req.openai?.model ?? '',
+        apiKey: req.openai?.apiKey,
         chat: req.openai?.chat,
         image: req.openai?.image,
         audio: req.openai?.audio,
@@ -226,23 +259,15 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
     }
     case 'rest':
     default: {
-      // Handle body serialization - strip File objects
-      let body = req.http?.body ?? { type: 'none' as const };
-      if (body.type === 'form-data') {
-        body = {
-          ...body,
-          data: body.data.map((f) => ({ ...f, file: null })),
-        };
-      } else if (body.type === 'binary') {
-        body = { ...body, file: null };
-      }
+      const body = await saveBody(req.http?.body ?? { type: 'none' });
+      const bodyDrafts = Object.fromEntries(await Promise.all(Object.entries(req.http?.bodyDrafts ?? {}).filter(([type]) => type !== body.type).map(async ([type, value]) => [type, await saveBody(value)])));
 
       // Serialize HTTP response with base64 body; very large bodies are not
       // persisted (they would bloat every save and slow down startup).
       let httpResponse: HttpSettings['response'];
       if (req.http?.response) {
         const bodyBlob = req.http.response.body instanceof Blob ? req.http.response.body : null;
-        const bodyOmitted = bodyBlob !== null && bodyBlob.size > MAX_PERSISTED_BODY_SIZE;
+        const bodyOmitted = req.http.response.bodyOmitted || (bodyBlob !== null && bodyBlob.size > MAX_PERSISTED_BODY_SIZE);
         const responseBody = bodyBlob && !bodyOmitted ? await blobToBase64(bodyBlob) : '';
         const bodyType = bodyBlob ? bodyBlob.type : 'application/octet-stream';
 
@@ -255,6 +280,7 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
           bodyOmitted: bodyOmitted || undefined,
           duration: req.http.response.duration,
           error: req.http.response.error,
+          interrupted: req.http.response.interrupted,
         };
       }
 
@@ -263,7 +289,9 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
         url: req.url,
         query: req.http?.query ?? [],
         headers: req.http?.headers ?? [],
-        body: body as RequestBody,
+        body,
+        bodyDrafts,
+        queryInUrl: req.http?.queryInUrl,
         options: req.http?.options ?? { insecure: false, redirect: true },
         response: httpResponse,
       };
@@ -274,12 +302,13 @@ async function serializeRequest(req: Request): Promise<SerializedRequest> {
   return base;
 }
 
-function deserializeRequest(serialized: SerializedRequest): Request {
+export function deserializeRequest(serialized: SerializedRequest): Request {
   // Infer protocol from which settings object is present
   const protocol: Protocol = serialized.grpc ? 'grpc' : serialized.mcp ? 'mcp' : serialized.openai ? 'openai' : 'rest';
 
   const base: Request = {
     id: serialized.id,
+    requestId: serialized.requestId,
     name: serialized.name,
     protocol,
     url: '',
@@ -312,6 +341,7 @@ function deserializeRequest(serialized: SerializedRequest): Request {
     
     base.openai = {
       model: openai.model,
+      apiKey: openai.apiKey,
       chat: openai.chat,
       image: openai.image,
       audio: openai.audio,
@@ -326,7 +356,9 @@ function deserializeRequest(serialized: SerializedRequest): Request {
       method: http.method,
       query: http.query,
       headers: http.headers,
-      body: http.body,
+      body: restoreBody(http.body),
+      bodyDrafts: Object.fromEntries(Object.entries(http.bodyDrafts ?? {}).map(([key, body]) => [key, restoreBody(body)])),
+      queryInUrl: http.queryInUrl,
       options: http.options,
       request: null,
       response: http.response ? {
@@ -339,11 +371,12 @@ function deserializeRequest(serialized: SerializedRequest): Request {
         bodyOmitted: http.response.bodyOmitted,
         duration: http.response.duration,
         error: http.response.error,
+        interrupted: http.response.interrupted,
       } : null,
     };
   }
 
-  return base;
+  return normalizeRequest(base);
 }
 
 // ============================================================================
@@ -352,8 +385,8 @@ function deserializeRequest(serialized: SerializedRequest): Request {
 
 const STORE_NAME = 'requests';
 
-async function fetchAllRequests(): Promise<SerializedRequest[]> {
-  const response = await fetch(`/data/${STORE_NAME}`);
+async function fetchAllRequests(store = STORE_NAME): Promise<SerializedRequest[]> {
+  const response = await fetch(`/data/${store}`, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error(`Failed to list entries: ${response.statusText}`);
   }
@@ -361,8 +394,8 @@ async function fetchAllRequests(): Promise<SerializedRequest[]> {
 
   const requests = await Promise.all(
     entries.map(async (entry) => {
-      const res = await fetch(`/data/${STORE_NAME}/${encodeURIComponent(entry.id)}`);
-      if (!res.ok) return null;
+      const res = await fetch(`/data/${store}/${encodeURIComponent(entry.id)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Failed to load saved request: ${res.status}`);
       const data: SerializedRequest = await res.json();
       return data;
     })
@@ -371,8 +404,8 @@ async function fetchAllRequests(): Promise<SerializedRequest[]> {
   return requests.filter((r): r is SerializedRequest => r !== null);
 }
 
-async function saveRequestToServer(serialized: SerializedRequest): Promise<void> {
-  const response = await fetch(`/data/${STORE_NAME}/${encodeURIComponent(serialized.id)}`, {
+async function saveRequestToServer(serialized: SerializedRequest, store = STORE_NAME): Promise<void> {
+  const response = await fetch(`/data/${store}/${encodeURIComponent(serialized.id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(serialized),
@@ -447,5 +480,34 @@ export const requestsCollection = createCollection(
 
 export async function clearAllRequests(): Promise<void> {
   const ids = Array.from(requestsCollection.state.keys()) as string[];
-  ids.forEach((id) => requestsCollection.delete(id));
+  await Promise.all(ids.map(id => requestsCollection.delete(id).isPersisted.promise));
+}
+
+export async function saveHistoryEntry(entry: Request): Promise<void> {
+  // Reuse the execution ID when retrying a failed write. Persist explicitly:
+  // an unchanged optimistic record can make a collection update a no-op.
+  await saveRequestToServer(await serializeRequest(entry));
+  requestsCollection.utils.writeUpsert(entry);
+}
+
+export async function loadDrafts(): Promise<Request[]> {
+  return (await fetchAllRequests('drafts')).map(deserializeRequest);
+}
+
+const draftWrites = new Map<string, Promise<void>>();
+export function saveDraft(request: Request): Promise<void> {
+  const write = (draftWrites.get(request.id) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    // Responses belong to execution history; drafts remain inexpensive to save.
+    const draft = { ...request, http: request.http && { ...request.http, response: null }, grpc: request.grpc && { ...request.grpc, response: undefined }, mcp: request.mcp && { ...request.mcp, response: undefined }, openai: request.openai && { ...request.openai, response: undefined } };
+    await saveRequestToServer(await serializeRequest(draft), 'drafts');
+  });
+  draftWrites.set(request.id, write);
+  void write.finally(() => { if (draftWrites.get(request.id) === write) draftWrites.delete(request.id); }).catch(() => {});
+  return write;
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  await draftWrites.get(id)?.catch(() => {});
+  const response = await fetch(`/data/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) throw new Error('Failed to delete saved request');
 }

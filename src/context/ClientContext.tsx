@@ -1,9 +1,13 @@
-import { useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback, useEffect, useEffectEvent, useRef, type ReactNode } from 'react';
 import { useLiveQuery } from '@tanstack/react-db';
 import {
   requestsCollection,
   clearAllRequests,
   generateId,
+  loadDrafts,
+  saveDraft,
+  saveHistoryEntry,
+  deleteDraft,
   type Request,
   type KeyValuePair,
   type HttpMethod,
@@ -19,22 +23,14 @@ import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, O
 import { resolveVariables } from '../utils/variables';
 import { kvToRecord } from '../utils/format';
 import { ClientContext, type ClientContextType } from './clientContextBase';
+import { executeHttp } from '../lib/http';
+import { normalizeRequest, queryFromUrl, urlWithQuery } from '../lib/requestUtils';
 
-const defaultHttpOptions: HttpRequest['options'] = { insecure: false, redirect: true };
+const defaultHttpOptions: HttpRequest['options'] = { insecure: false, redirect: true, timeout: 30000 };
 
 function createEmptyKeyValue(): KeyValuePair {
   return { id: generateId(), enabled: true, key: '', value: '' };
 }
-
-// Response headers injected by the Go proxy for its own functioning; hidden
-// from the displayed response (upstream originals arrive as X-Prism-Upstream-*).
-const PROXY_INJECTED_HEADERS = new Set([
-  'access-control-allow-origin',
-  'access-control-allow-methods',
-  'access-control-allow-headers',
-  'access-control-expose-headers',
-  'x-prism-status',
-]);
 
 function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
   const base: Request = {
@@ -73,6 +69,7 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
         method: 'GET',
         headers: [createEmptyKeyValue()],
         query: [createEmptyKeyValue()],
+        queryInUrl: true,
         body: { type: 'none' },
         options: defaultHttpOptions,
         request: null,
@@ -86,20 +83,130 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
 
 interface ClientState {
   request: Request;
-  isExecuting: boolean;
+  drafts: Record<string, Request>;
+  executingIds: string[];
+  loaded: boolean;
+  storageError?: string;
+  saving: boolean;
   sidebarCollapsed: boolean;
   aiPanelOpen: boolean;
 }
 
 const initialState: ClientState = {
   request: createNewRequest(),
-  isExecuting: false,
+  drafts: {},
+  executingIds: [],
+  loaded: false,
+  saving: false,
   sidebarCollapsed: false,
   aiPanelOpen: false,
 };
 
+function selectDraft(state: ClientState, request: Request): ClientState {
+  return { ...state, drafts: { ...state.drafts, [state.request.id]: state.request }, request };
+}
+
+function mergeResponse(draft: Request, result: Request): Request {
+  const merged = { ...draft, executionTime: result.executionTime };
+  if (result.http && draft.http) merged.http = { ...draft.http, request: result.http.request, response: result.http.response };
+  if (result.grpc && draft.grpc) merged.grpc = { ...draft.grpc, response: result.grpc.response };
+  if (result.mcp && draft.mcp) merged.mcp = { ...draft.mcp, response: result.mcp.response };
+  if (result.openai && draft.openai) merged.openai = { ...draft.openai, response: result.openai.response };
+  return merged;
+}
+
 export function ClientProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ClientState>(initialState);
+  const executions = useRef(new Map<string, AbortController>());
+  const pendingSaves = useRef(0);
+  const failedDrafts = useRef(new Set<string>());
+  const failedHistory = useRef(new Map<string, Request>());
+  const historyWrites = useRef(new Set<string>());
+  const workspaceWrite = useRef(Promise.resolve());
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let disposed = false;
+    Promise.all([loadDrafts(), fetch('/data/workspace/current', { cache: 'no-store' }).then(async r => {
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error('Failed to load workspace');
+      return r.json() as Promise<{ activeRequestId?: string }>;
+    })]).then(([drafts, workspace]) => {
+      if (disposed) return;
+      const request = drafts.find(d => d.id === workspace?.activeRequestId) ?? drafts.sort((a,b) => b.creationTime-a.creationTime)[0] ?? createNewRequest();
+      setState(prev => ({ ...prev, loaded: true, storageError: undefined, request, drafts: Object.fromEntries(drafts.map(d => [d.id,d])) }));
+    }).catch(error => { if (!disposed) setState(prev => ({ ...prev, storageError: String(error) })); });
+    return () => { disposed = true; };
+  }, [reload]);
+
+  const persistDraft = useCallback(async (request: Request) => {
+    pendingSaves.current++;
+    setState(prev => ({ ...prev, saving: true }));
+    try {
+      await saveDraft(request);
+      failedDrafts.current.delete(request.id);
+    } catch (error) {
+      failedDrafts.current.add(request.id);
+      setState(prev => ({ ...prev, storageError: `Could not save request: ${String(error)}` }));
+    }
+    finally {
+      pendingSaves.current--;
+      if (pendingSaves.current === 0) setState(prev => ({ ...prev, saving: false }));
+    }
+  }, []);
+
+  const { request: current, loaded } = state;
+  const persistCurrentDraft = useEffectEvent(() => { void persistDraft(current); });
+  useEffect(() => {
+    // This effect writes to external storage; the state update reports save progress.
+    // oxlint-disable-next-line react/set-state-in-effect
+    if (loaded) persistCurrentDraft();
+    // Persist editable fields only. Streaming response updates do not rewrite drafts.
+  }, [loaded, current.id, current.name, current.protocol, current.url, current.variables,
+    current.http?.method, current.http?.body, current.http?.bodyDrafts, current.http?.headers, current.http?.query, current.http?.options,
+    current.grpc?.body, current.grpc?.metadata, current.grpc?.schema,
+    current.mcp?.tool, current.mcp?.resource, current.mcp?.headers,
+    current.openai?.model, current.openai?.apiKey, current.openai?.chat, current.openai?.image, current.openai?.audio, current.openai?.transcription, current.openai?.embeddings]);
+
+  const persistWorkspace = useCallback((id: string) => {
+    // Preserve navigation order even when consecutive writes complete slowly.
+    workspaceWrite.current = workspaceWrite.current.then(async () => {
+      const response = await fetch('/data/workspace/current', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ activeRequestId: id }) });
+      if (!response.ok) throw new Error('Could not save active request');
+    }).catch(error => setState(prev => ({ ...prev, storageError: String(error) })));
+    return workspaceWrite.current;
+  }, []);
+
+  useEffect(() => {
+    if (loaded) void persistWorkspace(current.id);
+  }, [loaded, current.id, persistWorkspace]);
+
+  useEffect(() => {
+    const running = executions.current;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (pendingSaves.current || failedDrafts.current.size || failedHistory.current.size) event.preventDefault();
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => { window.removeEventListener('beforeunload', beforeUnload); for (const controller of running.values()) controller.abort(); };
+  }, []);
+
+  const beginExecution = useCallback((id: string) => {
+    if (executions.current.has(id)) return null;
+    const controller = new AbortController();
+    executions.current.set(id, controller);
+    setState(prev => ({ ...prev, executingIds: [...prev.executingIds, id] }));
+    return controller;
+  }, []);
+
+  const finishExecution = useCallback((id: string, controller: AbortController) => {
+    if (executions.current.get(id) !== controller) return;
+    executions.current.delete(id);
+    setState(prev => ({ ...prev, executingIds: prev.executingIds.filter(key => key !== id) }));
+  }, []);
+
+  const cancelRequest = useCallback(() => {
+    executions.current.get(state.request.id)?.abort(new Error('Request cancelled'));
+  }, [state.request.id]);
 
   // Use TanStack DB live query for history - sorted by execution time descending
   const { data: history = [] } = useLiveQuery((q) =>
@@ -117,12 +224,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   // Request actions
   const setProtocol = useCallback((protocol: Protocol) => {
-    // When changing protocol, preserve only URL and reset the protocol-specific data
     setState(prev => {
+      if (prev.request.protocol === protocol) return prev;
       const newReq = createNewRequest(prev.request.name, protocol);
-      newReq.id = prev.request.id;
       newReq.url = prev.request.url;
-      return { ...prev, request: newReq };
+      if (newReq.http) newReq.http.query = queryFromUrl(newReq.url);
+      return selectDraft(prev, newReq);
     });
   }, []);
 
@@ -137,8 +244,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setUrl = useCallback((url: string) => {
-    updateRequest({ url });
-  }, [updateRequest]);
+    setState(prev => ({ ...prev, request: { ...prev.request, url,
+      http: prev.request.http ? { ...prev.request.http, query: queryFromUrl(url, prev.request.http.query), queryInUrl: true } : undefined } }));
+  }, []);
 
   const setHeaders = useCallback((headers: KeyValuePair[]) => {
     setState(prev => ({
@@ -155,7 +263,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       ...prev,
       request: {
         ...prev.request,
-        http: { ...prev.request.http!, query },
+        url: urlWithQuery(prev.request.url, query),
+        http: { ...prev.request.http!, query, queryInUrl: true },
       },
     }));
   }, []);
@@ -166,7 +275,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       request: {
         ...prev.request,
         http: prev.request.http
-          ? { ...prev.request.http, body }
+          ? { ...prev.request.http, body, bodyDrafts: { ...prev.request.http.bodyDrafts, [prev.request.http.body.type]: prev.request.http.body, [body.type]: body } }
           : { method: 'GET', headers: [createEmptyKeyValue()], query: [createEmptyKeyValue()], body, options: defaultHttpOptions, request: null, response: null },
       },
     }));
@@ -421,7 +530,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const req = state.request;
     if (!req.url) return null;
 
-    setState(prev => ({ ...prev, isExecuting: true }));
+    const controller = beginExecution(req.id);
+    if (!controller) return null;
+    const timer = window.setTimeout(() => controller.abort(new Error('Discovery timed out')), 30000);
 
     try {
       const path = buildMcpProxyPath(req.url, 'features');
@@ -430,7 +541,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
 
       const response = await fetch(path, {
-        method: 'POST',
+        signal: controller.signal, method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ headers: kvToRecord(req.mcp?.headers ?? [], v => resolveVariables(v, req.variables)) }),
       });
@@ -442,14 +553,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (features.errors?.length && !features.error) {
         features.error = features.errors.join('; ');
       }
-      setState(prev => ({ ...prev, isExecuting: false }));
       return features;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setState(prev => ({ ...prev, isExecuting: false }));
       return { tools: [], resources: [], error: errorMessage };
-    }
-  }, [state.request]);
+    } finally { window.clearTimeout(timer); finishExecution(req.id, controller); }
+  }, [state.request, beginExecution, finishExecution]);
 
   const clearResponse = useCallback(() => {
     setState(prev => {
@@ -491,20 +600,23 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Save request to history (insert or update)
-  const saveToHistory = useCallback((updatedRequest: Request) => {
-    const historyRequest = updatedRequest.openai?.apiKey
-      ? { ...updatedRequest, openai: { ...updatedRequest.openai, apiKey: undefined } }
-      : updatedRequest;
-    const existingInHistory = history.find(h => h.id === historyRequest.id);
-    if (existingInHistory) {
-      requestsCollection.update(historyRequest.id, (draft) => {
-        Object.assign(draft, historyRequest);
-      });
-    } else {
-      requestsCollection.insert(historyRequest);
+  const persistHistory = useCallback(async (entry: Request) => {
+    if (historyWrites.current.has(entry.id)) return;
+    historyWrites.current.add(entry.id);
+    pendingSaves.current++;
+    setState(prev => ({ ...prev, saving: true }));
+    try {
+      await saveHistoryEntry(entry);
+      failedHistory.current.delete(entry.id);
+    } catch (error) {
+      failedHistory.current.set(entry.id, entry);
+      setState(prev => ({ ...prev, storageError: `Could not save history: ${String(error)}` }));
+    } finally {
+      historyWrites.current.delete(entry.id);
+      pendingSaves.current--;
+      if (pendingSaves.current === 0) setState(prev => ({ ...prev, saving: false }));
     }
-  }, [history]);
+  }, []);
 
   // Build error response for a failed request
   function buildErrorRequest(req: Request, errorMessage: string): Request {
@@ -530,7 +642,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   // --- Per-protocol execute functions ---
 
-  async function executeGrpc(req: Request): Promise<Request> {
+  async function executeGrpc(req: Request, signal: AbortSignal): Promise<Request> {
     const match = req.url.match(/^(grpcs?):\/\/([^/]+)\/(.+)\/([^/]+)$/);
     if (!match) {
       throw new Error('Invalid gRPC URL format. Expected: grpc://host:port/service/method');
@@ -550,7 +662,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const proxyUrl = `/proxy/grpc/${grpcScheme}/${grpcHost}/${grpcService}/${grpcMethod}`;
 
     const startTime = performance.now();
-    const response = await fetch(proxyUrl, { method: 'POST', headers: headersObj, body });
+    const response = await fetch(proxyUrl, { signal, method: 'POST', headers: headersObj, body });
     const duration = Math.round(performance.now() - startTime);
 
     const responseBody = await response.text();
@@ -575,7 +687,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     };
   }
 
-  async function executeMcp(req: Request): Promise<Request> {
+  async function executeMcp(req: Request, signal: AbortSignal): Promise<Request> {
     const serverUrl = req.url;
     if (!serverUrl) throw new Error('MCP server URL is required');
 
@@ -599,7 +711,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (!path) throw new Error('Invalid MCP server URL');
 
       const response = await fetch(path, {
-        method: 'POST',
+        signal, method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: req.mcp.tool.name, arguments: args, headers: mcpHeaders }),
       });
@@ -610,7 +722,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (!path) throw new Error('Invalid MCP server URL');
 
       const response = await fetch(path, {
-        method: 'POST',
+        signal, method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uri: req.mcp.resource.uri, headers: mcpHeaders }),
       });
@@ -627,7 +739,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     };
   }
 
-  async function executeOpenAI(req: Request): Promise<Request> {
+  async function executeOpenAI(req: Request, signal: AbortSignal): Promise<Request> {
     const baseUrl = req.url.replace(/\/$/, '');
     const model = req.openai?.model;
     const apiKey = req.openai?.apiKey;
@@ -666,7 +778,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }));
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'responses');
-      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input }) });
+      const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
 
       const data = await response.json();
@@ -701,14 +813,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           }
         }
         const proxyUrl = buildOpenAIProxyPath(baseUrl, 'images/edits');
-        const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
+        const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiBaseHeaders, body: formData });
         if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
         const data = await response.json();
         const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
         openaiResponse = { result: { type: 'image', image: img?.b64_json || img?.url || '' }, duration: Math.round(performance.now() - startTime) };
       } else {
         const proxyUrl = buildOpenAIProxyPath(baseUrl, 'images/generations');
-        const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, prompt, response_format: 'b64_json' }) });
+        const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, prompt, response_format: 'b64_json' }) });
         if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
         const data = await response.json();
         const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
@@ -720,7 +832,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (!text) throw new Error('Please enter text to convert to speech');
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'audio/speech');
-      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: text, voice }) });
+      const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: text, voice }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
 
       const audioBlob = await response.blob();
@@ -747,7 +859,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       formData.append('model', model);
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'audio/transcriptions');
-      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiBaseHeaders, body: formData });
+      const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiBaseHeaders, body: formData });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
       openaiResponse = { result: { type: 'transcription', text: data.text || '' }, duration: Math.round(performance.now() - startTime) };
@@ -756,7 +868,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (texts.length === 0) throw new Error('Please enter at least one text to convert to embeddings');
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'embeddings');
-      const response = await fetch(proxyUrl, { method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: texts }) });
+      const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input: texts }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
       openaiResponse = { result: { type: 'embeddings', embeddings: (data.data || []).map((item: { embedding: number[] }) => item.embedding) }, duration: Math.round(performance.now() - startTime) };
@@ -767,281 +879,72 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     return { ...req, executionTime: Date.now(), openai: { ...req.openai!, response: openaiResponse } };
   }
 
-  async function executeRest(req: Request): Promise<Request> {
-    const resolve = (text: string) => resolveVariables(text, req.variables);
-    const resolvedUrl = resolve(req.url);
-    const httpMethod = req.http?.method ?? 'GET';
-
-    // Ordered header list so duplicate names are preserved (like curl)
-    const headerPairs: Array<[string, string]> = (req.http?.headers ?? [])
-      .filter((h: KeyValuePair) => h.enabled && h.key)
-      .map((h: KeyValuePair) => [resolve(h.key), resolve(h.value)]);
-    const hasHeaderPair = (name: string) =>
-      headerPairs.some(([key]) => key.toLowerCase() === name.toLowerCase());
-    const addHeaderIfMissing = (name: string, value: string) => {
-      if (!hasHeaderPair(name)) headerPairs.push([name, value]);
-    };
-
-    const queryParams = new URLSearchParams();
-
-    // Query params from the URL come first, then the KV panel entries
-    try {
-      const typedUrl = new URL(resolvedUrl);
-      typedUrl.searchParams.forEach((value, key) => { queryParams.append(key, value); });
-    } catch { /* ignore invalid URLs */ }
-
-    for (const p of (req.http?.query ?? []).filter((p: KeyValuePair) => p.enabled && p.key)) {
-      queryParams.append(resolve(p.key), resolve(p.value));
-    }
-
-    // Build body
-    const httpBody = req.http?.body ?? { type: 'none' as const };
-    let body: string | FormData | Blob | undefined;
-    let bodyForHistory = '';
-    let useFormData = false;
-
-    switch (httpBody.type) {
-      case 'json': {
-        body = resolve(httpBody.content);
-        bodyForHistory = httpBody.content;
-        addHeaderIfMissing('Content-Type', 'application/json');
-        break;
-      }
-      case 'xml': {
-        body = resolve(httpBody.content);
-        bodyForHistory = httpBody.content;
-        addHeaderIfMissing('Content-Type', 'application/xml');
-        break;
-      }
-      case 'form-urlencoded': {
-        const formParams = new URLSearchParams();
-        httpBody.data.filter(f => f.enabled && f.key).forEach(f => formParams.append(resolve(f.key), resolve(f.value)));
-        body = formParams.toString();
-        bodyForHistory = formParams.toString();
-        addHeaderIfMissing('Content-Type', 'application/x-www-form-urlencoded');
-        break;
-      }
-      case 'form-data': {
-        const formData = new FormData();
-        const formDescription: string[] = [];
-        httpBody.data.filter(f => f.enabled && f.key).forEach(f => {
-          if (f.type === 'file' && f.file) {
-            formData.append(f.key, f.file, f.fileName);
-            formDescription.push(`${f.key}: [File: ${f.fileName}]`);
-          } else if (f.type === 'text') {
-            formData.append(f.key, resolve(f.value));
-            formDescription.push(`${f.key}: ${f.value}`);
-          }
-        });
-        body = formData;
-        bodyForHistory = formDescription.join('\n');
-        useFormData = true;
-        break;
-      }
-      case 'binary':
-        if (httpBody.file) {
-          body = httpBody.file;
-          bodyForHistory = `[Binary file: ${httpBody.fileName}]`;
-          addHeaderIfMissing('Content-Type', (httpBody.file as File).type || 'application/octet-stream');
-        }
-        break;
-      case 'raw':
-        body = resolve(httpBody.content);
-        bodyForHistory = httpBody.content;
-        addHeaderIfMissing('Content-Type', 'text/plain');
-        break;
-    }
-
-    // Options
-    const options = req.http?.options ?? defaultHttpOptions;
-
-    // Build proxy URL
-    let targetUrl: URL;
-    try {
-      targetUrl = new URL(resolvedUrl);
-    } catch {
-      throw new Error('Invalid URL. Include the scheme, e.g. https://example.com');
-    }
-    let proxyUrl = '/proxy/' + targetUrl.protocol.slice(0, -1) + '/' + targetUrl.host + targetUrl.pathname;
-    const queryString = queryParams.toString();
-    if (queryString) proxyUrl += '?' + queryString;
-
-    const headersForHistory: Record<string, string> = {};
-    for (const [key, value] of headerPairs) {
-      headersForHistory[key] = headersForHistory[key] !== undefined ? `${headersForHistory[key]}, ${value}` : value;
-    }
-
-    const clientRequest: HttpRequest = {
-      method: httpMethod, url: req.url, headers: headersForHistory,
-      query: Object.fromEntries(queryParams), body: bodyForHistory, options,
-    };
-
-    // Every user header is smuggled as X-Prism-Header-* and unwrapped by the
-    // proxy: the browser can neither drop them (fetch's forbidden-header
-    // list) nor mix them up with its own automatic headers.
-    const fetchHeaders = new Headers();
-    for (const [key, value] of headerPairs) {
-      if (useFormData && key.toLowerCase() === 'content-type') continue; // browser sets the multipart boundary
-      try {
-        fetchHeaders.append(`x-prism-header-${key}`, value);
-      } catch (err) {
-        throw new Error(`Invalid header "${key}"`, { cause: err });
-      }
-    }
-    if (options.insecure) fetchHeaders.set('X-Prism-Insecure', 'true');
-    fetchHeaders.set('X-Prism-Redirect', options.redirect ? 'true' : 'false');
-
-    const startTime = performance.now();
-    const response = await fetch(proxyUrl, {
-      method: httpMethod, headers: fetchHeaders,
-      body: body && httpMethod !== 'GET' && httpMethod !== 'HEAD' ? body : undefined,
-    });
-    const responseBody = await response.blob();
-    const duration = Math.round(performance.now() - startTime);
-
-    // The proxy masks 3xx behind X-Prism-Status ("302 Found") when redirect
-    // following is off, so the browser fetch doesn't chase Location itself.
-    let statusCode = response.status;
-    let statusText = response.statusText;
-    const masked = response.headers.get('x-prism-status');
-    if (masked) {
-      const space = masked.indexOf(' ');
-      const code = Number(space === -1 ? masked : masked.slice(0, space));
-      if (code) {
-        statusCode = code;
-        statusText = space === -1 ? '' : masked.slice(space + 1);
-      }
-    }
-
-    const responseHeaders: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      const lower = key.toLowerCase();
-      if (PROXY_INJECTED_HEADERS.has(lower)) return;
-      if (lower.startsWith('x-prism-upstream-')) {
-        responseHeaders[lower.slice('x-prism-upstream-'.length)] = value;
-        return;
-      }
-      responseHeaders[key] = value;
-    });
-
-    return {
-      ...req,
-      executionTime: Date.now(),
-      http: {
-        ...req.http!,
-        request: clientRequest,
-        response: { status: statusText || String(statusCode), statusCode, headers: responseHeaders, body: responseBody, duration },
-      },
-    };
-  }
 
   const executeRequest = async () => {
     const req = state.request;
-    setState(prev => ({ ...prev, isExecuting: true }));
-
+    const controller = beginExecution(req.id);
+    if (!controller) return;
+    const timeout = req.http?.options.timeout ?? 30000;
+    const timer = timeout > 0 ? window.setTimeout(() => controller.abort(new Error(`Request timed out after ${timeout / 1000}s`)), timeout) : undefined;
+    let latest: Request | undefined;
+    const publish = (result: Request) => {
+      latest = result;
+      setState(prev => {
+        if (prev.request.id === req.id) return { ...prev, request: mergeResponse(prev.request, result) };
+        const draft = prev.drafts[req.id];
+        return draft ? { ...prev, drafts: { ...prev.drafts, [req.id]: mergeResponse(draft, result) } } : prev;
+      });
+    };
     let updatedRequest: Request;
     try {
       switch (req.protocol) {
-        case 'grpc': updatedRequest = await executeGrpc(req); break;
-        case 'mcp': updatedRequest = await executeMcp(req); break;
-        case 'openai': updatedRequest = await executeOpenAI(req); break;
-        default: updatedRequest = await executeRest(req); break;
+        case 'grpc': updatedRequest = await executeGrpc(req, controller.signal); break;
+        case 'mcp': updatedRequest = await executeMcp(req, controller.signal); break;
+        case 'openai': updatedRequest = await executeOpenAI(req, controller.signal); break;
+        default: updatedRequest = await executeHttp(req, controller.signal, publish); break;
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      updatedRequest = buildErrorRequest(req, errorMessage);
-    }
-
-    // Merge only the response back so edits made while the request was in
-    // flight (user typing, AI-tool changes) aren't clobbered by the snapshot
-    // the execution ran against.
-    setState(prev => {
-      if (prev.request.id !== req.id || prev.request.protocol !== req.protocol) {
-        return { ...prev, isExecuting: false };
-      }
-      const merged: Request = { ...prev.request, executionTime: updatedRequest.executionTime };
-      if (updatedRequest.http) {
-        merged.http = { ...(prev.request.http ?? updatedRequest.http), request: updatedRequest.http.request, response: updatedRequest.http.response };
-      }
-      if (updatedRequest.grpc) {
-        merged.grpc = { ...(prev.request.grpc ?? updatedRequest.grpc), response: updatedRequest.grpc.response };
-      }
-      if (updatedRequest.mcp) {
-        merged.mcp = { ...(prev.request.mcp ?? updatedRequest.mcp), response: updatedRequest.mcp.response };
-      }
-      if (updatedRequest.openai) {
-        merged.openai = { ...(prev.request.openai ?? updatedRequest.openai), response: updatedRequest.openai.response };
-      }
-      return { ...prev, request: merged, isExecuting: false };
-    });
-
-    try {
-      saveToHistory(updatedRequest);
-    } catch (saveErr) {
-      console.error('Failed to save request to history:', saveErr);
-    }
+      const failure = controller.signal.aborted ? controller.signal.reason : err;
+      const message = failure instanceof Error ? failure.message : 'Request failed';
+      if (latest?.http?.response) {
+        updatedRequest = { ...latest, http: { ...latest.http, response: { ...latest.http.response, streaming: false, interrupted: message } } };
+      } else updatedRequest = buildErrorRequest(req, message);
+    } finally { window.clearTimeout(timer); }
+    publish(updatedRequest);
+    finishExecution(req.id, controller);
+    await persistHistory({ ...updatedRequest, id: generateId(), requestId: req.id });
   };
 
-  // History actions
   const loadFromHistory = useCallback((entry: Request) => {
-    const newReq = createNewRequest(entry.name, entry.protocol ?? 'rest');
-    // Preserve original IDs so everything matches
-    newReq.id = entry.id;
-    newReq.url = entry.url;
-    newReq.creationTime = entry.creationTime ?? newReq.creationTime;
-    newReq.executionTime = entry.executionTime;
-    newReq.variables = entry.variables ?? [];
-    
-    // Restore protocol-specific fields (keeping original IDs)
-    if (entry.http) {
-      newReq.http = {
-        method: entry.http.method,
-        headers: [...entry.http.headers],
-        query: [...entry.http.query],
-        body: entry.http.body,
-        options: entry.http.options,
-        request: entry.http.request,
-        response: entry.http.response,
-      };
-      // Handle special body types
-      if (entry.http.body.type === 'form-data') {
-        // Note: File objects can't be serialized, so files will be lost
-        newReq.http.body = {
-          type: 'form-data',
-          data: entry.http.body.data.map(f => ({ ...f, file: null })),
-        };
-      } else if (entry.http.body.type === 'binary') {
-        // Binary files can't be restored from history (can't serialize File objects)
-        newReq.http.body = { type: 'binary', file: null, fileName: entry.http.body.fileName };
-      }
-    }
-    if (entry.grpc) {
-      newReq.grpc = { ...entry.grpc };
-    }
-    if (entry.mcp) {
-      newReq.mcp = { ...entry.mcp };
-    }
-    if (entry.openai) {
-      newReq.openai = { ...entry.openai };
-    }
-    
-    setState(prev => ({
-      ...prev,
-      request: newReq,
-    }));
+    const request = normalizeRequest({ ...entry, id: generateId(), requestId: undefined, creationTime: Date.now() });
+    setState(prev => selectDraft(prev, request));
+  }, []);
+
+  const selectRequest = useCallback((id: string) => {
+    setState(prev => prev.request.id === id || !prev.drafts[id] ? prev : selectDraft(prev, prev.drafts[id]));
+  }, []);
+
+  const deleteRequest = useCallback(async (id: string) => {
+    executions.current.get(id)?.abort(new Error('Request deleted'));
+    try {
+      await deleteDraft(id);
+      failedDrafts.current.delete(id);
+      setState(prev => {
+        const drafts = { ...prev.drafts };
+        delete drafts[id];
+        return { ...prev, drafts, request: prev.request.id === id ? Object.values(drafts)[0] ?? createNewRequest() : prev.request };
+      });
+    } catch (error) { setState(prev => ({ ...prev, storageError: String(error) })); }
   }, []);
 
   const clearHistory = useCallback(async () => {
-    await clearAllRequests();
+    try { await clearAllRequests(); }
+    catch (error) { setState(prev => ({ ...prev, storageError: String(error) })); }
   }, []);
 
   const deleteHistoryEntry = useCallback(async (id: string) => {
-    requestsCollection.delete(id);
-    // If we just deleted the active request, replace it so the editor isn't orphaned.
-    setState(prev => {
-      if (prev.request.id !== id) return prev;
-      return { ...prev, request: createNewRequest() };
-    });
+    try { await requestsCollection.delete(id).isPersisted.promise; }
+    catch (error) { setState(prev => ({ ...prev, storageError: String(error) })); }
   }, []);
 
   const toggleSidebar = useCallback(() => {
@@ -1053,15 +956,31 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const newRequest = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      request: createNewRequest(),
-    }));
+    setState(prev => selectDraft(prev, createNewRequest()));
   }, []);
+
+  const retrySave = () => {
+    setState(prev => ({ ...prev, storageError: undefined }));
+    const drafts = { ...state.drafts, [state.request.id]: state.request };
+    for (const id of new Set([...failedDrafts.current, state.request.id])) {
+      if (drafts[id]) void persistDraft(drafts[id]);
+    }
+    for (const entry of failedHistory.current.values()) void persistHistory(entry);
+    void persistWorkspace(state.request.id);
+  };
 
   const value: ClientContextType = {
     request: state.request,
-    isExecuting: state.isExecuting,
+    isExecuting: state.executingIds.includes(state.request.id),
+    executingIds: state.executingIds,
+    drafts: Object.values({ ...state.drafts, [state.request.id]: state.request }).sort((a,b) => b.creationTime-a.creationTime),
+    selectRequest,
+    deleteRequest,
+    cancelRequest,
+    setName: name => updateRequest({ name }),
+    storageError: state.storageError,
+    isSaving: state.saving,
+    retrySave,
     history,
     sidebarCollapsed: state.sidebarCollapsed,
     aiPanelOpen: state.aiPanelOpen,
@@ -1099,6 +1018,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     toggleAiPanel,
   };
+
+  if (!state.loaded) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-sm text-neutral-500">
+    {state.storageError || 'Loading saved requests…'}
+    {state.storageError && <button className="px-3 py-1 border rounded" onClick={() => setReload(n => n + 1)}>Retry</button>}
+  </div>;
 
   return (
     <ClientContext.Provider value={value}>

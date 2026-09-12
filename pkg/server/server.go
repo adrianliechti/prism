@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httputil"
 	"net/url"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/adrianliechti/prism"
 	"github.com/adrianliechti/prism/pkg/config"
+	"golang.org/x/net/publicsuffix"
 )
 
 type Server struct {
@@ -22,6 +24,10 @@ type Server struct {
 
 	// remembers which MCP transport (streamable vs. sse) worked per server URL
 	mcpTransports sync.Map
+	cookies       *cookiejar.Jar
+	dataDir       string
+	dataKeyMu     sync.Mutex
+	dataKey       []byte
 }
 
 // requireLocalHost rejects requests whose Host is not a loopback name. The
@@ -57,9 +63,19 @@ func New(cfg *config.Config) (*Server, error) {
 	// the OpenAI key. Same-origin UI requests (browser and app shell) pass via
 	// Sec-Fetch-Site; header-less non-browser clients remain allowed.
 	csrf := http.NewCrossOriginProtection()
+	cookies, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	if err != nil {
+		return nil, err
+	}
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dataDir = getDataDir()
+	}
 
 	s := &Server{
 		Handler: requireLocalHost(csrf.Handler(mux)),
+		cookies: cookies,
+		dataDir: dataDir,
 	}
 
 	mux.HandleFunc("/proxy/grpc/{scheme}/{host}/{path...}", s.handleGRPC)

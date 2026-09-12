@@ -100,7 +100,7 @@ export function BinaryUploader({ file, fileName, onFileChange }: BinaryUploaderP
       )}
 
       <p className="text-xs text-neutral-400 dark:text-neutral-500">
-        The file will be sent as the raw request body. Content-Type will be set automatically based on the file type.
+        Files up to 8 MiB are saved with the request. Larger files need to be reattached after restarting Prism.
       </p>
     </div>
   );

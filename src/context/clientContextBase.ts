@@ -17,6 +17,15 @@ import type { Request } from '../lib/data';
 export interface ClientContextType {
   request: Request;
   isExecuting: boolean;
+  executingIds: string[];
+  drafts: Request[];
+  selectRequest: (id: string) => void;
+  deleteRequest: (id: string) => Promise<void>;
+  cancelRequest: () => void;
+  setName: (name: string) => void;
+  storageError?: string;
+  isSaving: boolean;
+  retrySave: () => void;
   history: Request[];
   sidebarCollapsed: boolean;
 
