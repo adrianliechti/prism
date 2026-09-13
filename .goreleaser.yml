@@ -65,11 +65,13 @@ changelog:
     - title: Others
       order: 999
 
-# macOS: Homebrew cask (formula `brews` was deprecated in GoReleaser v2).
+# macOS and Linux: Homebrew cask.
 homebrew_casks:
   - name: prism-cli
     # The installed command stays `prism` (the built binary name).
     binaries: [prism]
+    # The publisher adds postflight_steps; GoReleaser's hooks still emit postflight.
+    skip_upload: true
     repository:
       owner: adrianliechti
       name: homebrew-tap
@@ -81,14 +83,15 @@ homebrew_casks:
     homepage: "https://github.com/adrianliechti/prism"
     description: "Insomnia/Postman-like API client, running locally in your browser"
 
-    # Unsigned binary: strip the macOS quarantine attribute so it runs without
-    # a Gatekeeper prompt. (Casks only install on macOS; the guard is defensive.)
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/prism"]
-          end
+publishers:
+  - name: homebrew-cask
+    # Select only the extra cask file, not the archives with ID "prism".
+    ids: [prism-cli]
+    extra_files:
+      - glob: dist-cli/homebrew/Casks/prism-cli.rb
+    env:
+      - GITHUB_TOKEN={{ .Env.GITHUB_TOKEN }}
+    cmd: ./scripts/publish-cask.sh {{ .Version }} prism-cli
 
 # append: land in an existing release for the tag (or create it), so the CLI
 # and desktop app release flows (.goreleaser.app.yml) don't clash.
