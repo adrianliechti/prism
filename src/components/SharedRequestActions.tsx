@@ -3,6 +3,7 @@ import { RequestBarActions } from '../context/RequestBarActions';
 import { Send, Square, Sparkles } from 'lucide-react';
 import { useEffect } from 'react';
 import { missingAttachment } from '../lib/requestUtils';
+import { hasOpenAIInput } from '../lib/openai';
 import { getConfig } from '../config';
 
 export function SharedRequestActions() {
@@ -27,27 +28,7 @@ export function SharedRequestActions() {
   const mcpHasToolOrResource = !!request?.mcp?.tool || !!request?.mcp?.resource;
 
   const openaiModel = request?.openai?.model ?? '';
-  const openaiChatInput = request?.openai?.chat?.input ?? [];
-  const openaiImage = request?.openai?.image;
-  const openaiImagePrompt = openaiImage?.prompt ?? '';
-  const openaiAudioText = request?.openai?.audio?.text ?? '';
-  const openaiTranscriptionFile = request?.openai?.transcription?.file ?? '';
-  const openaiEmbeddingsInput = request?.openai?.embeddings?.input ?? [];
-  
-  // Check if OpenAI has valid input
-  const openaiHasValidInput = request?.openai?.chat
-    ? openaiChatInput.some(msg => msg.content.some(content => (
-        content.type === 'text'
-          ? content.text.trim().length > 0
-          : content.data.length > 0
-      )))
-    : request?.openai?.image
-      ? openaiImagePrompt.trim().length > 0
-      : request?.openai?.transcription
-        ? openaiTranscriptionFile.length > 0
-        : request?.openai?.embeddings
-          ? openaiEmbeddingsInput.some(item => item.text.trim().length > 0)
-          : openaiAudioText.trim().length > 0;
+  const openaiHasValidInput = hasOpenAIInput(request?.openai);
 
   const disabledReason = isLoading
     ? 'Request is running'

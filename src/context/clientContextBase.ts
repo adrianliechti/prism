@@ -7,9 +7,9 @@ import type {
   HttpRequest,
   Protocol,
   McpListFeaturesResponse,
+  McpOAuthClient,
   OpenAIChatInput,
   OpenAIEmbeddingsInput,
-  OpenAIBodyType,
   OpenAIImageFile,
 } from '../types/types';
 import type { Request } from '../lib/data';
@@ -48,11 +48,11 @@ export interface ClientContextType {
   setMcpTool: (tool: { name: string; arguments: string; schema?: Record<string, unknown> } | undefined) => void;
   setMcpResource: (resource: { uri: string } | undefined) => void;
   setMcpHeaders: (headers: KeyValuePair[]) => void;
+  setMcpOAuth: (oauth: McpOAuthClient) => void;
   discoverMcpFeatures: () => Promise<McpListFeaturesResponse | null>;
 
   setOpenAIModel: (model: string) => void;
   setOpenAIApiKey: (apiKey: string) => void;
-  setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
   setOpenAIImageFiles: (images: OpenAIImageFile[]) => void;

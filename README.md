@@ -12,9 +12,9 @@ npm run build
 go run ./cmd/prism -server
 ```
 
-Open the local address printed by the server (normally `http://localhost:9999`). Omit `-server` to open the browser automatically. For frontend development, keep the backend running on port 9999 and run `npm run dev` in another terminal.
+Open the local address printed by the server (normally `http://localhost:9999`). Omit `-server` to open the browser automatically. For frontend development, run `task run:server` and `task run:client` (the Vite dev server) in separate terminals.
 
-The desktop app can be built with `task build`; see [Taskfile.yml](Taskfile.yml) for platform packaging tasks. The tracked `dist` directory contains the frontend embedded into Go builds, so rebuild it after frontend changes.
+The desktop app can be built with `task build:app` and launched with `task run:app`; `task --list` shows the run, test, install and release tasks. The tracked `dist` directory contains the frontend embedded into Go builds, so rebuild it after frontend changes.
 
 ## Requests
 

@@ -98,10 +98,11 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     const model = getConfiguredModel();
     const adapter = createChatAdapter(model);
 
-    return stream((messages) =>
+    return stream((messages, _data, _signal, input) =>
       chat({
         adapter,
         messages,
+        threadId: input.threadId,
         tools,
         systemPrompts: [instructions],
         agentLoopStrategy: maxIterations(10),
@@ -109,9 +110,13 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
     );
   }, [tools, instructions]);
 
+  // useChat rebuilds its client, and with it the connection carrying the
+  // protocol's tools and instructions, only when the thread changes.
+  const [sessionId] = useState(() => crypto.randomUUID());
   const { messages, sendMessage, isLoading, stop, clear } = useChat({
     connection,
     tools,
+    threadId: `${request.protocol}-${sessionId}`,
   });
 
   // Auto-scroll to bottom when messages change
@@ -197,7 +202,10 @@ export function ChatPanel({ isOpen, onClose, request, setters }: ChatPanelProps)
         )}
         {messages.map((message, index) => {
           const content = getMessageContent(message);
-          
+
+          // Each model call is its own message; skip the ones that only called tools
+          if (message.role === 'assistant' && !content && !isStreaming(message, index)) return null;
+
           return (
             <div
               key={message.id}

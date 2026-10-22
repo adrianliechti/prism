@@ -169,8 +169,14 @@ export interface GrpcRequestData {
   };
 }
 
+export interface McpOAuthClient {
+  clientId?: string;
+  clientSecret?: string;
+}
+
 export interface McpRequestData {
   headers: KeyValuePair[]; // MCP request headers (for auth, etc.)
+  oauth?: McpOAuthClient; // pre-registered client; tokens stay in the backend
   tool?: {
     name: string;
     arguments: string; // JSON parameters
@@ -246,6 +252,7 @@ export interface OpenAIEmbeddingsInput {
 export interface OpenAIRequestData {
   model: string;
   apiKey?: string; // API key for authentication
+  bodyType?: OpenAIBodyType; // active mode; data of the other modes is kept
   chat?: {
     input: OpenAIChatInput[];
   };

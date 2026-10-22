@@ -26,7 +26,6 @@ function AppContent() {
     setMcpResource,
     // OpenAI setters
     setOpenAIModel,
-    setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,
     setOpenAIImageFiles,
@@ -51,7 +50,6 @@ function AppContent() {
     setMcpResource,
     // OpenAI
     setOpenAIModel,
-    setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,
     setOpenAIImageFiles,

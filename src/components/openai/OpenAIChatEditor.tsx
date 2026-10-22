@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { useClient } from '../../context/useClient';
 import { noAutoCorrectProps } from '../../utils/inputProps';
+import { isChatMessageEmpty } from '../../lib/openai';
 import { Trash2, FileText, Upload, X } from 'lucide-react';
 import type { OpenAIChatInput, OpenAIChatContent } from '../../types/types';
 
@@ -16,15 +17,28 @@ function createEmptyMessage(): OpenAIChatInput {
   };
 }
 
-function isMessageEmpty(message: OpenAIChatInput): boolean {
-  if (message.content.length === 0) return true;
-  const content = message.content[0];
-  switch (content.type) {
-    case 'text':
-      return !content.text;
-    case 'file':
-      return !content.data;
-  }
+// Grows with its content up to ~10 lines, then scrolls
+function MessageTextArea({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight + 2, 180)}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      {...noAutoCorrectProps}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Message content..."
+      className="block w-full px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded text-xs text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-white/20 transition-colors resize-none overflow-auto"
+    />
+  );
 }
 
 const EMPTY_CHAT_INPUT: OpenAIChatInput[] = [];
@@ -48,7 +62,7 @@ export function OpenAIChatEditor() {
     
     // Auto-add new row if last row has content
     const lastItem = newInput[newInput.length - 1];
-    if (lastItem && !isMessageEmpty(lastItem)) {
+    if (lastItem && !isChatMessageEmpty(lastItem)) {
       newInput.push(createEmptyMessage());
     }
     
@@ -113,13 +127,9 @@ export function OpenAIChatEditor() {
     switch (content.type) {
       case 'text':
         return (
-          <input
-            type="text"
-            {...noAutoCorrectProps}
+          <MessageTextArea
             value={content.text}
-            onChange={(e) => updateContent(message.id, { type: 'text', text: e.target.value })}
-            placeholder="Message content..."
-            className="w-full px-2 py-1 bg-white dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded text-xs text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-white/20 transition-colors"
+            onChange={(text) => updateContent(message.id, { type: 'text', text })}
           />
         );
       
@@ -164,7 +174,7 @@ export function OpenAIChatEditor() {
       <table className="w-full">
         <tbody>
           {chatInput.map((message) => (
-            <tr key={message.id} className="border-b border-neutral-100 dark:border-white/5 last:border-0">
+            <tr key={message.id} className="align-top border-b border-neutral-100 dark:border-white/5 last:border-0">
               {/* Role selector */}
               <td className="w-24 px-1.5 py-1.5">
                 <select

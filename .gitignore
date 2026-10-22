@@ -14,6 +14,10 @@ playwright-report
 #dist-ssr
 *.local
 
+# Local environment for Taskfile dotenv (OPENAI_* settings, keys)
+.env
+.env.*
+
 # goreleaser output (distinct from the tracked dist/ frontend build, which is
 # embedded via go:embed)
 /dist-app

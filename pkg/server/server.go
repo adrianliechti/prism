@@ -24,6 +24,7 @@ type Server struct {
 
 	// remembers which MCP transport (streamable vs. sse) worked per server URL
 	mcpTransports sync.Map
+	mcpAuth       mcpAuthStore
 	cookies       *cookiejar.Jar
 	dataDir       string
 	dataKeyMu     sync.Mutex
@@ -82,6 +83,7 @@ func New(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/features", s.handleMcpListFeatures)
 	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/tool/call", s.handleMcpCallTool)
 	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/resource/call", s.handleMcpReadResource)
+	mux.HandleFunc("/proxy/mcp/{scheme}/{host}/auth", s.handleMcpAuth)
 	mux.HandleFunc("/proxy/{scheme}/{host}/{path...}", s.handleProxy)
 
 	mux.HandleFunc("GET /data/{store}", s.handleDataList)

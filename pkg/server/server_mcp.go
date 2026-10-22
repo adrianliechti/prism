@@ -73,18 +73,25 @@ func (s *Server) connectMcp(ctx context.Context, serverURL string, headers map[s
 		Version: "1.0.0",
 	}, nil)
 
-	transport := &statusTransport{base: http.DefaultTransport}
-	if len(headers) > 0 {
-		transport.base = &headerTransport{base: http.DefaultTransport, headers: headers}
+	// Explicit headers are applied first, so a manual Authorization header
+	// takes precedence over a stored OAuth token.
+	var base http.RoundTripper = http.DefaultTransport
+	if ts := s.mcpTokenSource(serverURL); ts != nil {
+		base = &tokenTransport{base: base, source: ts}
 	}
+	if len(headers) > 0 {
+		base = &headerTransport{base: base, headers: headers}
+	}
+	transport := &statusTransport{base: base}
 	httpClient := &http.Client{Transport: transport}
 
 	attempts := [2]struct {
 		kind      string
 		transport mcp.Transport
 	}{
-		{"streamable", &mcp.StreamableClientTransport{Endpoint: serverURL, HTTPClient: httpClient}},
-		{"sse", &mcp.SSEClientTransport{Endpoint: serverURL, HTTPClient: httpClient}},
+		// No event size cap: large tool results and resources are what users inspect
+		{"streamable", &mcp.StreamableClientTransport{Endpoint: serverURL, HTTPClient: httpClient, MaxEventSize: -1}},
+		{"sse", &mcp.SSEClientTransport{Endpoint: serverURL, HTTPClient: httpClient, MaxEventSize: -1}},
 	}
 	if kind, ok := s.mcpTransports.Load(serverURL); preferSSE || (ok && kind == "sse") {
 		attempts[0], attempts[1] = attempts[1], attempts[0]
@@ -104,6 +111,9 @@ func (s *Server) connectMcp(ctx context.Context, serverURL string, headers map[s
 	// Auth failures and network errors would fail identically on both, so
 	// retrying only obscures the actual error.
 	status := int(transport.status.Load())
+	if status == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: %s: %v", errMcpAuthRequired, attempts[0].kind, err)
+	}
 	if status < 400 || status >= 500 || status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, fmt.Errorf("%s: %w", attempts[0].kind, err)
 	}
@@ -118,6 +128,16 @@ func (s *Server) connectMcp(ctx context.Context, serverURL string, headers map[s
 
 	s.mcpTransports.Store(serverURL, attempts[1].kind)
 	return session, nil
+}
+
+// writeMcpConnectError reports a failed connect; an authorization challenge
+// is passed on as 401 so the UI can offer to authorize.
+func writeMcpConnectError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errMcpAuthRequired) {
+		http.Error(w, "MCP server requires authorization: authorize Prism in the Auth tab, or set an Authorization header ("+err.Error()+")", http.StatusUnauthorized)
+		return
+	}
+	http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
 }
 
 // mcpTargetURL returns the target server URL from the ?server= query
@@ -150,14 +170,17 @@ func (s *Server) handleMcpListFeatures(w http.ResponseWriter, r *http.Request) {
 
 	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
-		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
+		writeMcpConnectError(w, err)
 		return
 	}
 	defer session.Close()
 
 	// Listing is attempted regardless of advertised capabilities (lax servers
 	// omit them); errors are only surfaced for sections the server advertised.
-	capabilities := session.InitializeResult().Capabilities
+	capabilities := &mcp.ServerCapabilities{}
+	if result := session.InitializeResult(); result != nil && result.Capabilities != nil {
+		capabilities = result.Capabilities
+	}
 
 	response := McpListFeaturesResponse{
 		Tools:     []McpFeature{},
@@ -230,7 +253,7 @@ func (s *Server) handleMcpCallTool(w http.ResponseWriter, r *http.Request) {
 
 	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
-		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
+		writeMcpConnectError(w, err)
 		return
 	}
 	defer session.Close()
@@ -268,7 +291,7 @@ func (s *Server) handleMcpReadResource(w http.ResponseWriter, r *http.Request) {
 
 	session, err := s.connectMcp(ctx, serverURL, req.Headers)
 	if err != nil {
-		http.Error(w, "failed to connect to MCP server: "+err.Error(), http.StatusBadGateway)
+		writeMcpConnectError(w, err)
 		return
 	}
 	defer session.Close()

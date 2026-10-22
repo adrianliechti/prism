@@ -2,15 +2,15 @@
 import { toolDefinition } from '@tanstack/ai';
 import { clientTools } from '@tanstack/ai-client';
 import { z } from 'zod';
-import type { Request, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIBodyType, OpenAIImageFile } from '../../types/types';
+import type { Request, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIImageFile } from '../../types/types';
 import { generateId } from '../../lib/data';
+import { getOpenAIBodyType } from '../../lib/openai';
 import { truncateBody, emptySchema, setUrlSchema, type AdapterConfig } from '../../api/toolsCommon';
 
 // OpenAI-specific setters interface
 export interface OpenAISetters {
   setUrl: (url: string) => void;
   setOpenAIModel: (model: string) => void;
-  setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
   setOpenAIImageFiles: (images: OpenAIImageFile[]) => void;
@@ -25,22 +25,10 @@ export interface OpenAIToolsEnvironment {
   setters: OpenAISetters;
 }
 
-// Determine the active body type from request data
-function getActiveBodyType(request: Request): OpenAIBodyType {
-  const openai = request.openai;
-  if (!openai) return 'chat';
-  if (openai.chat) return 'chat';
-  if (openai.image) return 'image';
-  if (openai.audio) return 'audio';
-  if (openai.transcription) return 'transcription';
-  if (openai.embeddings) return 'embeddings';
-  return 'chat';
-}
-
 // Format request for AI context
 function formatRequestForAI(request: Request): Record<string, unknown> {
   const openai = request.openai;
-  const bodyType = getActiveBodyType(request);
+  const bodyType = getOpenAIBodyType(openai);
   
   const base = {
     url: request.url,
@@ -141,11 +129,7 @@ function formatResponseForAI(request: Request): Record<string, unknown> | null {
 
 // Zod schemas for OpenAI-specific tools
 const setModelSchema = z.object({
-  model: z.string().describe('The OpenAI model name (e.g., gpt-4o, gpt-4o-mini, dall-e-3, tts-1, whisper-1, text-embedding-3-small)'),
-});
-
-const setBodyTypeSchema = z.object({
-  bodyType: z.enum(['chat', 'image', 'audio', 'transcription', 'embeddings']).describe('The type of OpenAI request: chat (completions), image (generation), audio (TTS), transcription (STT), or embeddings'),
+  model: z.string().describe('The model name as listed by the endpoint. Also switches the body type to match the model (e.g. gpt-image-*/dall-e-*/flux → image, *tts* → audio, whisper/*transcribe*/*stt* → transcription, *embed*/bge → embeddings, otherwise chat)'),
 });
 
 const setChatMessagesSchema = z.object({
@@ -193,19 +177,13 @@ const setUrlDef = toolDefinition({
 
 const setModelDef = toolDefinition({
   name: 'set_model',
-  description: 'Set the OpenAI model to use',
+  description: 'Set the OpenAI model to use; the body type follows the model automatically',
   inputSchema: setModelSchema,
-});
-
-const setBodyTypeDef = toolDefinition({
-  name: 'set_body_type',
-  description: 'Set the type of OpenAI request (chat, image, audio, transcription, embeddings)',
-  inputSchema: setBodyTypeSchema,
 });
 
 const setChatMessagesDef = toolDefinition({
   name: 'set_chat_messages',
-  description: 'Set the chat messages for a chat completion request',
+  description: 'Set the input messages for a chat (Responses API) request',
   inputSchema: setChatMessagesSchema,
 });
 
@@ -249,11 +227,6 @@ export function createTools(environment: OpenAIToolsEnvironment) {
     return { success: true, model };
   });
 
-  const setBodyType = setBodyTypeDef.client(async ({ bodyType }) => {
-    environment.setters.setOpenAIBodyType(bodyType);
-    return { success: true, bodyType };
-  });
-
   const setChatMessages = setChatMessagesDef.client(async ({ messages }) => {
     environment.setters.setOpenAIChatInput(
       messages.map((m): OpenAIChatInput => ({
@@ -290,7 +263,6 @@ export function createTools(environment: OpenAIToolsEnvironment) {
     getResponse,
     setUrl,
     setModel,
-    setBodyType,
     setChatMessages,
     setImagePrompt,
     setAudio,
@@ -302,22 +274,23 @@ export function createTools(environment: OpenAIToolsEnvironment) {
 export function getInstructions(): string {
   return `You are an AI assistant embedded in an OpenAI API client. You have tools that directly modify the request form visible to the user in real-time.
 
-IMPORTANT: When you use tools like set_url, set_model, set_body_type, set_chat_messages, etc., the changes appear immediately in the user's request panel. You are actively editing their request—not just describing what to do.
+IMPORTANT: When you use tools like set_url, set_model, set_chat_messages, etc., the changes appear immediately in the user's request panel. You are actively editing their request—not just describing what to do.
 
 Your capabilities:
 - View the current OpenAI request configuration (URL, model, body type, and type-specific data)
 - Directly modify the request—changes are applied instantly to the UI
 - View and analyze responses after the user executes the request
 
-Supported body types and their models:
-- chat: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo (chat completions)
-- image: dall-e-3, dall-e-2 (image generation)
-- audio: tts-1, tts-1-hd (text-to-speech)
-- transcription: whisper-1 (speech-to-text)
-- embeddings: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002
+Body types and the model families that select them:
+- chat: text models (any model not matched below), sent to the Responses API
+- image: *image*, dall-e, imagen, flux, stable-diffusion (image generation, or edits when images are attached)
+- audio: *tts*, eleven*, *speech* (text-to-speech)
+- transcription: whisper, *transcribe*, *stt* (speech-to-text)
+- embeddings: *embed*, *embedding*, bge, gte, minilm, clip (embeddings)
+- realtime (*realtime*, *live*) and reranker models are not supported and leave the body type unchanged
 
 Guidelines:
-- First set the body_type, then configure type-specific options
+- Set the model first: the body type always follows the model name (see above) and cannot be set separately
 - For chat, use set_chat_messages with role (system/user/assistant) and content
 - For image, use set_image_prompt with a descriptive prompt
 - For audio (TTS), use set_audio with text and optional voice

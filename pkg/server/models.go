@@ -61,6 +61,21 @@ type McpReadResourceRequest struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+type McpAuthRequest struct {
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Pre-registered client; without one Prism registers dynamically
+	ClientID     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+}
+
+type McpAuthStatus struct {
+	Status           string `json:"status"` // none, pending, authorized, not_required
+	AuthorizationURL string `json:"authorizationUrl,omitempty"`
+	RedirectURL      string `json:"redirectUrl"`
+	Error            string `json:"error,omitempty"`
+}
+
 type McpResourceContent struct {
 	URI      string `json:"uri"`
 	MimeType string `json:"mimeType,omitempty"`

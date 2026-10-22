@@ -14,9 +14,11 @@ import type {
   HttpRequestData,
   GrpcRequestData,
   McpRequestData,
+  McpOAuthClient,
   OpenAIRequestData,
   HttpRequest,
   HttpResponse,
+  OpenAIBodyType,
   OpenAIChatInput,
   OpenAIEmbeddingsInput,
   OpenAIImageFile,
@@ -100,6 +102,7 @@ interface GrpcSettings {
 interface McpSettings {
   url: string;         // MCP server URL
   headers: KeyValuePair[]; // MCP request headers
+  oauth?: McpOAuthClient;
   tool?: {
     name: string;
     arguments: string; // JSON parameters
@@ -120,6 +123,7 @@ interface OpenAISettings {
   url: string;         // OpenAI API URL
   model: string;       // Selected model
   apiKey?: string;
+  bodyType?: OpenAIBodyType;
   chat?: {
     input: OpenAIChatInput[];
   };
@@ -237,6 +241,7 @@ export async function serializeRequest(req: Request): Promise<SerializedRequest>
       base.mcp = {
         url: req.url,
         headers: req.mcp?.headers ?? [],
+        oauth: req.mcp?.oauth,
         tool: req.mcp?.tool,
         resource: req.mcp?.resource,
         response: req.mcp?.response,
@@ -248,6 +253,7 @@ export async function serializeRequest(req: Request): Promise<SerializedRequest>
         url: req.url,
         model: req.openai?.model ?? '',
         apiKey: req.openai?.apiKey,
+        bodyType: req.openai?.bodyType,
         chat: req.openai?.chat,
         image: req.openai?.image,
         audio: req.openai?.audio,
@@ -331,6 +337,7 @@ export function deserializeRequest(serialized: SerializedRequest): Request {
     base.url = mcp.url;
     base.mcp = {
       headers: mcp.headers,
+      oauth: mcp.oauth,
       tool: mcp.tool,
       resource: mcp.resource,
       response: mcp.response,
@@ -342,6 +349,7 @@ export function deserializeRequest(serialized: SerializedRequest): Request {
     base.openai = {
       model: openai.model,
       apiKey: openai.apiKey,
+      bodyType: openai.bodyType,
       chat: openai.chat,
       image: openai.image,
       audio: openai.audio,
@@ -447,33 +455,28 @@ export const requestsCollection = createCollection(
     getKey: (item: Request) => item.id,
     queryClient,
 
-    onInsert: async ({ transaction }) => {
-      await Promise.all(
-        transaction.mutations.map(async (mutation) => {
-          const request = mutation.modified as Request;
-          const serialized = await serializeRequest(request);
-          await saveRequestToServer(serialized);
-        })
-      );
+    // Handlers write the result into the synced state themselves instead of
+    // refetching everything (auto-refetch is deprecated). Returning before the
+    // write would drop the optimistic row.
+    onInsert: async ({ transaction, collection }) => {
+      const rows = transaction.mutations.map((mutation) => mutation.modified as Request);
+      await Promise.all(rows.map(async (request) => saveRequestToServer(await serializeRequest(request))));
+      await collection.utils.writeUpsert(rows);
+      return { refetch: false };
     },
 
-    onUpdate: async ({ transaction }) => {
-      await Promise.all(
-        transaction.mutations.map(async (mutation) => {
-          const request = mutation.modified as Request;
-          const serialized = await serializeRequest(request);
-          await saveRequestToServer(serialized);
-        })
-      );
+    onUpdate: async ({ transaction, collection }) => {
+      const rows = transaction.mutations.map((mutation) => mutation.modified as Request);
+      await Promise.all(rows.map(async (request) => saveRequestToServer(await serializeRequest(request))));
+      await collection.utils.writeUpsert(rows);
+      return { refetch: false };
     },
 
-    onDelete: async ({ transaction }) => {
-      await Promise.all(
-        transaction.mutations.map(async (mutation) => {
-          const original = mutation.original as Request;
-          await deleteRequestFromServer(original.id);
-        })
-      );
+    onDelete: async ({ transaction, collection }) => {
+      const ids = transaction.mutations.map((mutation) => (mutation.original as Request).id);
+      await Promise.all(ids.map((id) => deleteRequestFromServer(id)));
+      await collection.utils.writeDelete(ids);
+      return { refetch: false };
     },
   })
 );
@@ -487,7 +490,7 @@ export async function saveHistoryEntry(entry: Request): Promise<void> {
   // Reuse the execution ID when retrying a failed write. Persist explicitly:
   // an unchanged optimistic record can make a collection update a no-op.
   await saveRequestToServer(await serializeRequest(entry));
-  requestsCollection.utils.writeUpsert(entry);
+  await requestsCollection.utils.writeUpsert(entry);
 }
 
 export async function loadDrafts(): Promise<Request[]> {

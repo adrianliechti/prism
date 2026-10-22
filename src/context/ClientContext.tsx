@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useEffectEvent, useRef, type ReactNode } from 'react';
-import { useLiveQuery } from '@tanstack/react-db';
+import { coalesce, useLiveQuery } from '@tanstack/react-db';
 import {
   requestsCollection,
   clearAllRequests,
@@ -19,7 +19,8 @@ import {
   type McpReadResourceResponse,
 } from '../lib/data';
 import { buildOpenAIProxyPath, buildMcpProxyPath } from '../lib/proxy';
-import type { McpListFeaturesResponse, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIRequestData, OpenAIImageFile } from '../types/types';
+import { buildResponsesInput, getOpenAIBodyType, inferOpenAIBodyType, parseResponsesOutput } from '../lib/openai';
+import type { McpListFeaturesResponse, McpOAuthClient, OpenAIBodyType, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIRequestData, OpenAIImageFile } from '../types/types';
 import { resolveVariables } from '../utils/variables';
 import { kvToRecord } from '../utils/format';
 import { ClientContext, type ClientContextType } from './clientContextBase';
@@ -58,6 +59,7 @@ function createNewRequest(name?: string, protocol: Protocol = 'rest'): Request {
     case 'openai':
       base.openai = {
         model: '',
+        bodyType: 'chat',
         chat: {
           input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }],
         },
@@ -104,6 +106,21 @@ const initialState: ClientState = {
 
 function selectDraft(state: ClientState, request: Request): ClientState {
   return { ...state, drafts: { ...state.drafts, [state.request.id]: state.request }, request };
+}
+
+// Switching modes keeps the input of the other modes, so picking a model of
+// another kind by mistake loses nothing; only the stale response is dropped.
+function withOpenAIBodyType(openai: OpenAIRequestData | undefined, bodyType: OpenAIBodyType): OpenAIRequestData {
+  const next: OpenAIRequestData = { model: '', ...openai, bodyType };
+  if (getOpenAIBodyType(openai) !== bodyType) next.response = undefined;
+  switch (bodyType) {
+    case 'chat': next.chat ??= { input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }] }; break;
+    case 'image': next.image ??= { prompt: '', images: [{ id: generateId(), data: '' }] }; break;
+    case 'audio': next.audio ??= { text: '', voice: 'alloy' }; break;
+    case 'transcription': next.transcription ??= { file: '' }; break;
+    case 'embeddings': next.embeddings ??= { input: [{ id: generateId(), text: '' }] }; break;
+  }
+  return next;
 }
 
 function mergeResponse(draft: Request, result: Request): Request {
@@ -165,8 +182,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, [loaded, current.id, current.name, current.protocol, current.url, current.variables,
     current.http?.method, current.http?.body, current.http?.bodyDrafts, current.http?.headers, current.http?.query, current.http?.options,
     current.grpc?.body, current.grpc?.metadata, current.grpc?.schema,
-    current.mcp?.tool, current.mcp?.resource, current.mcp?.headers,
-    current.openai?.model, current.openai?.apiKey, current.openai?.chat, current.openai?.image, current.openai?.audio, current.openai?.transcription, current.openai?.embeddings]);
+    current.mcp?.tool, current.mcp?.resource, current.mcp?.headers, current.mcp?.oauth,
+    current.openai?.model, current.openai?.apiKey, current.openai?.bodyType, current.openai?.chat, current.openai?.image, current.openai?.audio, current.openai?.transcription, current.openai?.embeddings]);
 
   const persistWorkspace = useCallback((id: string) => {
     // Preserve navigation order even when consecutive writes complete slowly.
@@ -208,10 +225,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     executions.current.get(state.request.id)?.abort(new Error('Request cancelled'));
   }, [state.request.id]);
 
-  // Use TanStack DB live query for history - sorted by execution time descending
+  // Use TanStack DB live query for history - sorted by execution time descending.
+  // Query refs are proxies, so the fallback must be a query expression, not ??.
   const { data: history = [] } = useLiveQuery((q) =>
     q.from({ req: requestsCollection })
-      .orderBy(({ req }) => req.executionTime ?? req.creationTime, 'desc')
+      .orderBy(({ req }) => coalesce(req.executionTime, req.creationTime), 'desc')
   );
 
   // Helper to update request
@@ -389,17 +407,29 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  // OpenAI-specific setters
-  const setOpenAIModel = useCallback((model: string) => {
+  const setMcpOAuth = useCallback((oauth: McpOAuthClient) => {
     setState(prev => ({
       ...prev,
       request: {
         ...prev.request,
-        openai: prev.request.openai
-          ? { ...prev.request.openai, model }
-          : { model, chat: { input: [] } },
+        mcp: { headers: [], ...prev.request.mcp, oauth },
       },
     }));
+  }, []);
+
+  // OpenAI-specific setters
+  const setOpenAIModel = useCallback((model: string) => {
+    setState(prev => {
+      // Models no mode fits (realtime, rerankers) keep the current mode
+      const bodyType = (model ? inferOpenAIBodyType(model) : undefined) ?? getOpenAIBodyType(prev.request.openai);
+      return {
+        ...prev,
+        request: {
+          ...prev.request,
+          openai: { ...withOpenAIBodyType(prev.request.openai, bodyType), model },
+        },
+      };
+    });
   }, []);
 
   const setOpenAIApiKey = useCallback((apiKey: string) => {
@@ -412,33 +442,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           : { model: '', apiKey, chat: { input: [] } },
       },
     }));
-  }, []);
-
-  const setOpenAIBodyType = useCallback((bodyType: 'chat' | 'image' | 'audio' | 'transcription' | 'embeddings') => {
-    setState(prev => {
-      const currentOpenAI = prev.request.openai;
-      const newOpenAI: OpenAIRequestData = {
-        model: currentOpenAI?.model ?? '',
-        apiKey: currentOpenAI?.apiKey,
-        ...(bodyType === 'chat' 
-          ? { chat: currentOpenAI?.chat ?? { input: [{ id: generateId(), role: 'user', content: [{ type: 'text', text: '' }] }] } }
-          : bodyType === 'image'
-          ? { image: currentOpenAI?.image ?? { prompt: '', images: [{ id: generateId(), data: '' }] } }
-          : bodyType === 'audio'
-          ? { audio: currentOpenAI?.audio ?? { text: '', voice: 'alloy' } }
-          : bodyType === 'transcription'
-          ? { transcription: currentOpenAI?.transcription ?? { file: '' } }
-          : { embeddings: currentOpenAI?.embeddings ?? { input: [{ id: generateId(), text: '' }] } }
-        ),
-      };
-      return {
-        ...prev,
-        request: {
-          ...prev.request,
-          openai: newOpenAI,
-        },
-      };
-    });
   }, []);
 
   const setOpenAIChatInput = useCallback((input: OpenAIChatInput[]) => {
@@ -629,12 +632,13 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
     if (req.protocol === 'openai') {
       let errorResult: NonNullable<OpenAIRequestData['response']>['result'];
-      if (req.openai?.chat) errorResult = { type: 'text', text: '' };
-      else if (req.openai?.image) errorResult = { type: 'image', image: '' };
-      else if (req.openai?.audio) errorResult = { type: 'audio', audio: '' };
-      else if (req.openai?.transcription) errorResult = { type: 'transcription', text: '' };
-      else if (req.openai?.embeddings) errorResult = { type: 'embeddings', embeddings: [] };
-      else errorResult = { type: 'text', text: '' };
+      switch (getOpenAIBodyType(req.openai)) {
+        case 'chat': errorResult = { type: 'text', text: '' }; break;
+        case 'image': errorResult = { type: 'image', image: '' }; break;
+        case 'audio': errorResult = { type: 'audio', audio: '' }; break;
+        case 'transcription': errorResult = { type: 'transcription', text: '' }; break;
+        case 'embeddings': errorResult = { type: 'embeddings', embeddings: [] }; break;
+      }
       return { ...req, executionTime, openai: { ...req.openai!, response: { result: errorResult, duration: 0, error: errorMessage } } };
     }
     return { ...req, executionTime, http: { ...req.http!, response: { status: '', statusCode: 0, headers: {}, body: new Blob(), duration: 0, error: errorMessage } } };
@@ -758,44 +762,22 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     const openaiHeaders: Record<string, string> = { ...openaiBaseHeaders, 'Content-Type': 'application/json' };
 
     const startTime = performance.now();
+    const bodyType = getOpenAIBodyType(req.openai);
     let openaiResponse: OpenAIRequestData['response'];
 
-    if (req.openai?.chat) {
-      const input = (req.openai.chat.input ?? []).map(msg => ({
-        role: msg.role,
-        content: msg.content.map(c => {
-          switch (c.type) {
-            case 'text':
-              return { type: 'input_text', text: c.text };
-            case 'file':
-              if (c.data.startsWith('data:image/')) {
-                return { type: 'input_image', image_url: c.data };
-              } else {
-                return { type: 'input_file', filename: c.name || 'file', file_data: c.data };
-              }
-          }
-        }),
-      }));
+    if (bodyType === 'chat') {
+      const input = buildResponsesInput(req.openai?.chat?.input ?? []);
+      if (input.length === 0) throw new Error('Please enter at least one message');
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'responses');
       const response = await fetch(proxyUrl, { signal, method: 'POST', headers: openaiHeaders, body: JSON.stringify({ model, input }) });
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
 
       const data = await response.json();
-      let chatOutput = '';
-      if (data.output && Array.isArray(data.output)) {
-        for (const item of data.output) {
-          if (item.type === 'message' && item.content) {
-            for (const content of item.content) {
-              if (content.type === 'output_text') chatOutput += content.text;
-            }
-          }
-        }
-      }
-      openaiResponse = { result: { type: 'text', text: chatOutput }, duration: Math.round(performance.now() - startTime) };
-    } else if (req.openai?.image) {
-      const prompt = req.openai.image.prompt ?? '';
-      const images = req.openai.image.images ?? [];
+      openaiResponse = { result: { type: 'text', text: parseResponsesOutput(data) }, duration: Math.round(performance.now() - startTime) };
+    } else if (bodyType === 'image') {
+      const prompt = req.openai?.image?.prompt ?? '';
+      const images = req.openai?.image?.images ?? [];
       const validImages = images.filter(img => img.data.length > 0);
       if (!prompt) throw new Error('Please enter an image prompt');
 
@@ -826,9 +808,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         const img = (data.data || [])[0] as { b64_json?: string; url?: string } | undefined;
         openaiResponse = { result: { type: 'image', image: img?.b64_json || img?.url || '' }, duration: Math.round(performance.now() - startTime) };
       }
-    } else if (req.openai?.audio) {
-      const text = req.openai.audio.text ?? '';
-      const voice = req.openai.audio.voice ?? 'alloy';
+    } else if (bodyType === 'audio') {
+      const text = req.openai?.audio?.text ?? '';
+      const voice = req.openai?.audio?.voice ?? 'alloy';
       if (!text) throw new Error('Please enter text to convert to speech');
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'audio/speech');
@@ -843,8 +825,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         reader.readAsDataURL(audioBlob);
       });
       openaiResponse = { result: { type: 'audio', audio: audioBase64 }, duration: Math.round(performance.now() - startTime) };
-    } else if (req.openai?.transcription) {
-      const dataUrl = req.openai.transcription.file ?? '';
+    } else if (bodyType === 'transcription') {
+      const dataUrl = req.openai?.transcription?.file ?? '';
       if (!dataUrl) throw new Error('Please select an audio file to transcribe');
 
       const [mimeTypePart, base64] = dataUrl.split(',');
@@ -863,8 +845,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
       openaiResponse = { result: { type: 'transcription', text: data.text || '' }, duration: Math.round(performance.now() - startTime) };
-    } else if (req.openai?.embeddings) {
-      const texts = (req.openai.embeddings.input ?? []).filter(item => item.text.trim()).map(item => item.text);
+    } else {
+      const texts = (req.openai?.embeddings?.input ?? []).filter(item => item.text.trim()).map(item => item.text);
       if (texts.length === 0) throw new Error('Please enter at least one text to convert to embeddings');
 
       const proxyUrl = buildOpenAIProxyPath(baseUrl, 'embeddings');
@@ -872,8 +854,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (!response.ok) { const t = await response.text(); throw new Error(t || `HTTP ${response.status}`); }
       const data = await response.json();
       openaiResponse = { result: { type: 'embeddings', embeddings: (data.data || []).map((item: { embedding: number[] }) => item.embedding) }, duration: Math.round(performance.now() - startTime) };
-    } else {
-      throw new Error('Invalid OpenAI request type');
     }
 
     return { ...req, executionTime: Date.now(), openai: { ...req.openai!, response: openaiResponse } };
@@ -1001,10 +981,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setMcpTool,
     setMcpResource,
     setMcpHeaders,
+    setMcpOAuth,
     discoverMcpFeatures,
     setOpenAIModel,
     setOpenAIApiKey,
-    setOpenAIBodyType,
     setOpenAIChatInput,
     setOpenAIImagePrompt,
     setOpenAIImageFiles,

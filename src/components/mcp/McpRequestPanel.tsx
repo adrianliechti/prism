@@ -2,8 +2,9 @@ import { useState, useMemo } from 'react';
 import { useClient } from '../../context/useClient';
 import { JsonEditor, KeyValueEditor } from '../editors';
 import { buildSchemaExample } from '../../utils/schemaExample';
+import { McpAuthPanel } from './McpAuthPanel';
 
-type Tab = 'headers' | 'body';
+type Tab = 'headers' | 'auth' | 'body';
 
 const commonMcpHeaders = [
   'Authorization',
@@ -32,6 +33,7 @@ export function McpRequestPanel() {
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'headers', label: 'Headers', count: headers.filter(h => h.key).length },
+    { id: 'auth', label: 'Auth' },
     { id: 'body', label: 'Payload' },
   ];
 
@@ -73,6 +75,8 @@ export function McpRequestPanel() {
             keySuggestions={commonMcpHeaders}
           />
         )}
+
+        {activeTab === 'auth' && <McpAuthPanel />}
 
         {activeTab === 'body' && (
           selectedTool ? (

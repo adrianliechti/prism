@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useClient } from '../../context/useClient';
 import { buildOpenAIProxyPath } from '../../lib/proxy';
+import { getOpenAIBodyType, inferOpenAIBodyType } from '../../lib/openai';
 import { noAutoCorrectProps } from '../../utils/inputProps';
 import { ChevronDown, Cpu, RefreshCw, Key } from 'lucide-react';
 
@@ -10,6 +11,7 @@ export function OpenAIRequestBar() {
   const url = request?.url ?? '';
   const model = request?.openai?.model ?? '';
   const apiKey = request?.openai?.apiKey ?? '';
+  const bodyType = getOpenAIBodyType(request?.openai);
 
   const [models, setModels] = useState<string[]>([]);
 
@@ -68,9 +70,9 @@ export function OpenAIRequestBar() {
       
       setModels(modelIds);
       
-      // Auto-select first model if none selected
+      // Auto-select a model for the current mode if none selected
       if (!model && modelIds.length > 0) {
-        setOpenAIModel(modelIds[0]);
+        setOpenAIModel(modelIds.find(id => inferOpenAIBodyType(id) === bodyType) ?? modelIds[0]);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch models';
@@ -79,7 +81,7 @@ export function OpenAIRequestBar() {
     } finally {
       setLoading(false);
     }
-  }, [url, model, setOpenAIModel, apiKey]);
+  }, [url, model, bodyType, setOpenAIModel, apiKey]);
 
   // Fetch models when URL changes (debounced)
   useEffect(() => {

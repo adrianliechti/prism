@@ -1,67 +1,101 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
-version: '3'
+version: "3"
+
+dotenv: [".env"]
 
 tasks:
-  start:
-    cmds:
-      - npm run build
-      - go run ./cmd/prism
-
-  client:
-    cmds:
-      - npm run dev
-
-  server:
-    cmds:
-      - go run ./cmd/prism -server -port 9999
-
-  install:
-    cmds:
-      - cmd: go install ./cmd/prism
-      - task: install-darwin
-      - task: install-windows
-
-  install-darwin:
-    platforms: [darwin]
-    cmds:
-      - task: build
-      - cmd: mkdir -p ~/Applications
-      - cmd: rm -rf ~/Applications/Prism.app
-      - cmd: mv app/build/bin/Prism.app ~/Applications/
-
-  install-windows:
-    platforms: [windows]
-    cmds:
-      # Task runs cmds through its built-in POSIX shell (mvdan/sh) even on
-      # Windows, so env vars expand as $VAR, not %VAR%.
-      - task: build
-      - cmd: mkdir -p "$LOCALAPPDATA/Programs"
-      - cmd: rm -f "$LOCALAPPDATA/Programs/Prism.exe"
-      - cmd: mv app/build/bin/Prism.exe "$LOCALAPPDATA/Programs/"
-
-  build:
-    desc: Build the desktop app for this platform (Prism.app / Prism.exe); all resources are generated from app/appicon.png
-    cmds:
-      - go tool appbundle -name Prism -id com.adrianliechti.prism -description "Prism - API Client" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app
-
-  ui:
-    desc: Build the web UI assets
+  build:ui:
+    desc: Build the web UI assets into the tracked dist/ folder embedded by Go builds
+    run: once
     cmds:
       - npm install
       - npm run build
 
-  release:app:
-    desc: Release the macOS desktop app + Homebrew cask (macOS only; needs GITHUB_TOKEN)
+  build:app:
+    desc: Build the desktop app for this platform (Prism.app / Prism.exe); all resources are generated from app/appicon.png
+    deps: [build:ui]
     cmds:
-      # --skip=validate: skip git-state checks so snapshot/dry runs work from a dirty tree.
-      - goreleaser release --clean --skip=validate -f .goreleaser.app.yml
+      - go tool appbundle -name Prism -id com.adrianliechti.prism -description "Prism - API Client" -company "Adrian Liechti" -copyright "© Adrian Liechti" -package ./app
+
+  test:unit:
+    desc: Run Go and frontend unit tests
+    cmds:
+      - go test ./...
+      - npm test
+
+  test:web:
+    desc: Build and run browser end-to-end tests
+    cmds:
+      - npm run test:browser
+
+  test:
+    desc: Run all unit and browser end-to-end tests
+    cmds:
+      - task: test:unit
+      - task: test:web
+
+  run:web:
+    desc: Build the web UI, then run Prism and open it in the browser
+    deps: [build:ui]
+    cmds:
+      - go run ./cmd/prism
+
+  run:server:
+    desc: Run the backend on port 9999 without rebuilding the UI, for use with run:client
+    cmds:
+      - go run ./cmd/prism -server -port 9999
+
+  run:client:
+    desc: Run the Vite dev server with hot reload; API calls are proxied to run:server
+    cmds:
+      - npm run dev
+
+  run:app:
+    desc: Build and launch the desktop app with web inspection enabled
+    deps: [build:app]
+    env:
+      PRISM_DEBUG: "1"
+    cmds:
+      - cmd: open -n --env PRISM_DEBUG=1 app/build/bin/Prism.app
+        platforms: [darwin]
+      - cmd: app/build/bin/Prism.exe
+        platforms: [windows]
+
+  install:cli:
+    desc: Build and install the CLI to GOPATH/bin or GOBIN
+    deps: [build:ui]
+    cmds:
+      - go install ./cmd/prism
+
+  install:app:
+    desc: Build and install the desktop app to ~/Applications (macOS) or %LOCALAPPDATA%\Programs (Windows)
+    deps: [build:app]
+    cmds:
+      - cmd: mkdir -p ~/Applications && rm -rf ~/Applications/Prism.app && cp -R app/build/bin/Prism.app ~/Applications/
+        platforms: [darwin]
+      # Task runs cmds through its built-in POSIX shell (mvdan/sh) even on
+      # Windows, so env vars expand as $VAR, not %VAR%.
+      - cmd: mkdir -p "$LOCALAPPDATA/Programs" && rm -f "$LOCALAPPDATA/Programs/Prism.exe" && cp app/build/bin/Prism.exe "$LOCALAPPDATA/Programs/"
+        platforms: [windows]
+
+  install:
+    desc: Build and install both the CLI and the desktop app locally
+    cmds:
+      - task: install:cli
+      - task: install:app
 
   release:cli:
     desc: Release the CLI for all platforms + Homebrew cask (needs GITHUB_TOKEN)
     cmds:
       # --skip=validate: the UI build hook regenerates the tracked dist/ folder, dirtying the tree.
       - goreleaser release --clean --skip=validate -f .goreleaser.yml
+
+  release:app:
+    desc: Release the macOS desktop app + Homebrew cask (macOS only; needs GITHUB_TOKEN)
+    cmds:
+      # --skip=validate: skip git-state checks so snapshot/dry runs work from a dirty tree.
+      - goreleaser release --clean --skip=validate -f .goreleaser.app.yml
 
   release:
     desc: Full release — CLI (all platforms) then the desktop app, on the current git tag

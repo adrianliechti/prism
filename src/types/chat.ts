@@ -1,5 +1,5 @@
 // Chat panel types for TanStack AI integration
-import type { HttpMethod, KeyValuePair, RequestBody, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIBodyType, OpenAIImageFile } from './types';
+import type { HttpMethod, KeyValuePair, RequestBody, OpenAIChatInput, OpenAIEmbeddingsInput, OpenAIImageFile } from './types';
 
 // HTTP request setters interface
 export interface HttpSetters {
@@ -29,7 +29,6 @@ export interface McpSetters {
 export interface OpenAISetters {
   setUrl: (url: string) => void;
   setOpenAIModel: (model: string) => void;
-  setOpenAIBodyType: (bodyType: OpenAIBodyType) => void;
   setOpenAIChatInput: (input: OpenAIChatInput[]) => void;
   setOpenAIImagePrompt: (prompt: string) => void;
   setOpenAIImageFiles: (images: OpenAIImageFile[]) => void;

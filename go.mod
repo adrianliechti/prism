@@ -4,8 +4,9 @@ go 1.26.0
 
 require (
 	github.com/adrianliechti/go-shell v0.1.7
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/net v0.59.0
+	golang.org/x/oauth2 v0.37.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260911204522-f61a6ca850bd
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
@@ -21,7 +22,6 @@ require (
 	github.com/tc-hib/winres v0.3.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/image v0.45.0 // indirect
-	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
