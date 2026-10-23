@@ -121,7 +121,7 @@ function GrpcSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 w-full min-w-48 max-w-md bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 w-full min-w-48 max-w-md bg-bg-elevated border border-border rounded-lg shadow-xl z-50 overflow-hidden">
           <div className="max-h-64 overflow-y-auto p-1">
             {isLoading && (
               <div className="px-3 py-4 text-center text-sm text-neutral-500">

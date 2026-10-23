@@ -141,7 +141,7 @@ export function OpenAIRequestBar() {
         </button>
 
         {modelMenuOpen && (
-          <div className="absolute left-0 z-50 mt-2 w-72 max-h-96 bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute left-0 z-50 mt-2 w-72 max-h-96 bg-bg-elevated border border-border rounded-lg shadow-xl overflow-hidden">
             <div className="p-2 border-b border-neutral-200 dark:border-white/10 flex items-center justify-between">
               <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
                 Models ({models.length})

@@ -108,7 +108,7 @@ export function KeyValueEditor({
                       const filtered = getFilteredSuggestions(filterText);
                       if (filtered.length === 0) return null;
                       return (
-                        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-white dark:bg-[#1a1a1a] border border-neutral-200 dark:border-white/10 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                        <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-bg-elevated border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
                           {filtered.map((suggestion) => (
                             <button
                               key={suggestion}
