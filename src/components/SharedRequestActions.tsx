@@ -86,7 +86,7 @@ export function SharedRequestActions() {
         type="button"
         onClick={handleSubmit}
         disabled={!isLoading && !canExecute}
-        className="p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 disabled:opacity-30 disabled:cursor-not-allowed"
+        className="toolbar-button disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
         aria-label={isLoading ? 'Cancel' : 'Send'}
         title={isLoading ? 'Cancel request' : canExecute ? 'Send request (Enter in address bar)' : disabledReason}
       >
@@ -100,11 +100,8 @@ export function SharedRequestActions() {
         <button
           type="button"
           onClick={toggleAiPanel}
-          className={`p-1.5 hover:bg-neutral-100 dark:hover:bg-white/10 rounded-md transition-colors ${
-            aiPanelOpen
-              ? 'text-amber-500 hover:text-amber-600'
-              : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200'
-          }`}
+          aria-pressed={aiPanelOpen}
+          className="toolbar-button"
           title="AI Assistant"
         >
           <Sparkles className="w-4 h-4" />

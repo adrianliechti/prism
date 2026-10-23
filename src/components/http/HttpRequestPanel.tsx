@@ -149,7 +149,7 @@ export function HttpRequestPanel() {
             className="h-6 px-2 text-[11px] font-medium bg-white dark:bg-white/10 text-neutral-800 dark:text-neutral-100 rounded-md shadow-sm border-0 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-white/20 cursor-pointer transition-all min-w-30"
           >
             {bodyTypes.map((type) => (
-              <option key={type.value} value={type.value} className="bg-white dark:bg-[#1a1a1a]">
+              <option key={type.value} value={type.value} className="bg-bg-elevated">
                 {type.label}
               </option>
             ))}

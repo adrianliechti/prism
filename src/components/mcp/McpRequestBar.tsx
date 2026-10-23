@@ -76,7 +76,7 @@ export function McpRequestBar() {
         </button>
 
         {featureMenuOpen && (
-          <div className="absolute left-0 z-50 mt-2 w-[min(640px,calc(100vw-4rem))] max-h-[70vh] bg-white dark:bg-[#0f0f0f] border border-neutral-200 dark:border-white/10 rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute left-0 z-50 mt-2 w-[min(640px,calc(100vw-4rem))] max-h-[70vh] bg-bg-elevated border border-border rounded-lg shadow-xl overflow-hidden">
             <div className="h-105">
               <McpFeatureBrowser onSelected={() => setFeatureMenuOpen(false)} />
             </div>

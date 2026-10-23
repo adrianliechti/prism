@@ -59,12 +59,12 @@ function AppContent() {
   };
 
   return (
-    <div className="h-screen flex bg-neutral-50 dark:bg-[#0d0d0d] py-2 pr-2 pl-1 gap-2 text-neutral-900 dark:text-neutral-100">
+    <div className="flex h-screen bg-bg text-fg">
       {/* Sidebar */}
       <Sidebar />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden gap-2 min-w-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Request Panel */}
         <div className="flex-1 overflow-hidden min-h-0">
           <RequestPanel />

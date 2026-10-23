@@ -118,37 +118,45 @@ export function Sidebar() {
   const grouped = useMemo(() => groupByHostname(entries), [entries]);
   if (sidebarCollapsed) return null;
   return (
-    <aside className="w-60 shrink-0 bg-white dark:bg-[#1a1a1a]/60 border border-neutral-200 dark:border-white/8 rounded-xl flex flex-col overflow-hidden">
-      <div className="px-3 py-2.5 flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">Prism</h1>
-        <div className="flex items-center gap-1">
-          {view === 'history' && history.length > 0 && <button onClick={clearHistory} className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-white/5" title="Clear history"><Trash2 className="w-4 h-4 text-neutral-500" /></button>}
-          <button onClick={toggleSidebar} className="p-1.5 rounded hover:bg-neutral-100 dark:hover:bg-white/5" title="Hide sidebar"><PanelRightOpen className="w-4 h-4 text-neutral-500" /></button>
+    <aside className="sidebar w-60 shrink-0">
+      <div className="sidebar-titlebar">
+        <span className="sidebar-title">Prism</span>
+        <div className="ml-auto flex items-center">
+          {view === 'history' && history.length > 0 && (
+            <button type="button" onClick={clearHistory} className="toolbar-button" title="Clear history">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          <button type="button" onClick={toggleSidebar} className="toolbar-button" title="Hide sidebar">
+            <PanelRightOpen className="w-4 h-4" />
+          </button>
         </div>
       </div>
-      <div role="tablist" aria-label="Saved requests and history" className="flex px-2 gap-1">
-        {(['requests', 'history'] as const).map(tab => <button key={tab} role="tab" aria-selected={view === tab} onClick={() => setView(tab)}
-          className={`flex-1 py-1.5 rounded text-xs ${view === tab ? 'bg-neutral-100 dark:bg-white/10 font-medium' : 'text-neutral-500'}`}>
+      <div role="tablist" aria-label="Saved requests and history" className="mx-2 flex gap-0.5 rounded-lg bg-bg-hover p-0.5">
+        {(['requests', 'history'] as const).map(tab => <button key={tab} type="button" role="tab" aria-selected={view === tab} onClick={() => setView(tab)}
+          className={`flex-1 rounded-md py-1 text-xs font-medium transition-colors ${view === tab ? 'bg-bg text-fg shadow-sm dark:bg-bg-active' : 'text-fg-muted hover:text-fg'}`}>
           {tab === 'requests' ? 'Requests' : 'History'}
         </button>)}
       </div>
-      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3">
-        {grouped.length === 0 && <p className="px-2 py-6 text-center text-xs text-neutral-400">{view === 'requests' ? 'No saved requests yet' : 'No history yet'}</p>}
-        {grouped.map(group => <div key={group.hostname} className="mb-3">
-          <div className="px-2 py-1 text-[10px] text-neutral-400 uppercase truncate">{group.hostname}</div>
-          {group.entries.map(entry => <div key={entry.id} className={`group flex items-center rounded-md ${view === 'requests' && entry.id === request.id ? 'bg-neutral-100 dark:bg-white/10' : 'hover:bg-neutral-50 dark:hover:bg-white/5'}`}>
-            <button aria-current={view === 'requests' && entry.id === request.id ? 'page' : undefined}
+      <div className="flex-1 overflow-y-auto px-2 pb-3">
+        {grouped.length === 0 && <p className="px-2 py-6 text-center text-xs text-fg-dim">{view === 'requests' ? 'No saved requests yet' : 'No history yet'}</p>}
+        {grouped.map(group => <div key={group.hostname}>
+          <div className="sidebar-section" title={group.hostname}>
+            <span className="truncate">{group.hostname}</span>
+          </div>
+          {group.entries.map(entry => <div key={entry.id} className="sidebar-item group p-0 pr-1 has-[[aria-current]]:bg-bg-active">
+            <button type="button" aria-current={view === 'requests' && entry.id === request.id ? 'page' : undefined}
               onClick={() => { if (view === 'requests') selectRequest(entry.id); else loadFromHistory(entry); }}
-              className="flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left" title={entry.url || 'Untitled request'}>
-              {executingIds.includes(entry.id) ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>{getDisplayMethod(entry)}</span>}
+              className="flex min-w-0 flex-1 items-center gap-2 self-stretch py-1 pl-2.5 text-left" title={entry.url || 'Untitled request'}>
+              {executingIds.includes(entry.id) ? <Loader2 className="w-3 h-3 animate-spin shrink-0 text-fg-dim" /> : <span className={`text-[10px] font-semibold shrink-0 ${getMethodColor(entry)}`}>{getDisplayMethod(entry)}</span>}
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs">{view === 'requests' ? requestLabel(entry) : getDisplayPath(entry)}</span>
-                {view === 'history' && entry.executionTime && <time className="block mt-0.5 text-[10px] text-neutral-400" dateTime={new Date(entry.executionTime).toISOString()}>{new Date(entry.executionTime).toLocaleString()}</time>}
+                <span className="block truncate">{view === 'requests' ? requestLabel(entry) : getDisplayPath(entry)}</span>
+                {view === 'history' && entry.executionTime && <time className="block text-[11px] leading-4 text-fg-dim" dateTime={new Date(entry.executionTime).toISOString()}>{new Date(entry.executionTime).toLocaleString()}</time>}
               </span>
             </button>
-            <button onClick={() => { if (view === 'requests') void deleteRequest(entry.id); else void deleteHistoryEntry(entry.id); }}
+            <button type="button" onClick={() => { if (view === 'requests') void deleteRequest(entry.id); else void deleteHistoryEntry(entry.id); }}
               title={view === 'requests' ? 'Delete saved request' : 'Delete history entry'}
-              className="p-1 mr-1 text-neutral-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 focus:opacity-100"><X className="w-3 h-3" /></button>
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-dim opacity-0 transition hover:bg-bg-active hover:text-danger group-hover:opacity-100 focus:opacity-100"><X className="w-3 h-3" /></button>
           </div>)}
         </div>)}
       </div>

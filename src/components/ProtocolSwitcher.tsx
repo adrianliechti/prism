@@ -30,11 +30,11 @@ export function ProtocolSwitcher() {
   }, []);
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="window-no-drag relative">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1 px-2 py-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-white/10 transition-colors text-neutral-600 dark:text-neutral-400"
+        className="flex items-center gap-1 px-2 h-8 rounded-md hover:bg-bg-hover transition-colors text-fg-muted hover:text-fg"
         title={currentProtocol.label}
       >
         <Icon className="w-4 h-4" />
@@ -43,7 +43,7 @@ export function ProtocolSwitcher() {
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 bg-white dark:bg-[#1a1a1a] border border-neutral-200 dark:border-white/10 rounded-md shadow-lg z-50 min-w-28">
+        <div className="absolute top-full left-0 mt-1 py-1 bg-bg-elevated border border-border rounded-md shadow-lg z-50 min-w-28">
           {protocols.map((p) => {
             const PIcon = p.icon;
             return (
@@ -56,8 +56,8 @@ export function ProtocolSwitcher() {
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors ${
                   protocol === p.value
-                    ? 'bg-neutral-100 dark:bg-white/10 text-neutral-900 dark:text-neutral-100'
-                    : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-white/5'
+                    ? 'bg-bg-active text-fg'
+                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
               >
                 <PIcon className="w-4 h-4" />
